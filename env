@@ -1,0 +1,4 @@
+MANAGEMENT_PASSWORD="sk-I1ZwYA08JmwTa09RFSHu-fARZncZbaqA3DjnhSRQawlj3O9s"
+PGSTORE_DSN="postgresql://neondb_owner:npg_sd6YMwZFi3NG@ep-jolly-credit-ap57unkq-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+PGSTORE_SCHEMA="northflank_work"
+PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
