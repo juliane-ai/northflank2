@@ -1,49 +1,69 @@
-# northflank2: CLI Proxy API 聚合架构示例
+# northflank2: CLI Proxy API + GPT-Load 聚合架构示例
 
-这个目录参考 `Northflank-multi-Instance` 的架构设计：用一个 Northflank Service 承载多个进程。当前只放入 `cli-proxy-api`，后续需要服务聚合时，可以继续在同一个 Dockerfile 中复制其他服务二进制，并在 `entrypoint.sh` 中追加后台启动逻辑。
+这个目录参考 `Northflank-multi-Instance` 的架构设计：用一个 Northflank Service 承载多个进程。当前聚合 `cli-proxy-api` 和 `gpt-load`，后续可以继续在同一个 Dockerfile 中复制其他服务二进制，并在 `entrypoint.sh` 中追加后台启动逻辑。
 
-配置和 PostgreSQL Store 使用环境变量控制，不再维护 `config.yaml`。
+CLI Proxy API 使用 `PGSTORE_*` 环境变量；GPT-Load 使用 `DATABASE_DSN` 连接同一个 Aiven PostgreSQL，并通过不同 schema 做实例隔离。
 
 ## 架构
 
 | 文件 | 作用 |
 | --- | --- |
-| `Dockerfile` | 多阶段构建：先从官方 `eceasy/cli-proxy-api:latest` 取 CLIProxyAPI 二进制，再放入 Alpine 聚合运行时 |
-| `entrypoint.sh` | 聚合启动脚本；当前启动 CLI Proxy API，后续服务也从这里统一启动和清理 |
+| `Dockerfile` | 多阶段构建：从官方镜像提取 CLIProxyAPI 和 GPT-Load 二进制，再放入 Alpine 聚合运行时 |
+| `entrypoint.sh` | 聚合启动脚本；后台启动 GPT-Load，再启动 CLI Proxy API，并统一处理退出清理 |
 | `env` | Northflank 环境变量参考，不会复制进镜像 |
 
 ## 当前服务
 
 | 服务 | 端口 | 用途 |
 | --- | --- | --- |
+| GPT-Load | `3001` | AI API 透明代理、Key 轮询、管理后台 |
 | CLI Proxy API | `8317` | 主 API 服务 |
 | CLI Proxy API 附加端口 | `8085`, `1455`, `54545`, `51121`, `11451` | 按官方 Docker 文档预留 |
 
-## PostgreSQL Store 环境变量
+## GPT-Load 方案 3: 同库不同 Schema
 
-参考官方文档：`PGSTORE_DSN` 存在时会启用 PostgreSQL Store，并优先于 Object Store 和 Git Store。
+当前实例使用同一个 Aiven PostgreSQL 的 `defaultdb`，但把 GPT-Load 表放在独立 schema：
 
 ```env
-MANAGEMENT_PASSWORD="..."
-PGSTORE_DSN="postgresql://user:password@host:5432/dbname?sslmode=require"
-PGSTORE_SCHEMA="northflank_work"
-PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
+DATABASE_DSN="postgres://avnadmin:...@pg-2cd0e13b-hutamefohiy46-c768.i.aivencloud.com:11191/defaultdb?sslmode=require&search_path=gpt_load_northflank2"
 ```
 
-| 变量 | 说明 |
-| --- | --- |
-| `PGSTORE_DSN` | PostgreSQL 连接串，必填 |
-| `PGSTORE_SCHEMA` | 数据库 schema，可选，默认 `public` |
-| `PGSTORE_LOCAL_PATH` | 本地镜像目录，可选，默认 `./pgstore` |
+部署前先在 Aiven PG Studio 或 psql 中执行：
+
+```sql
+CREATE SCHEMA IF NOT EXISTS gpt_load_northflank2;
+```
+
+如果 GPT-Load 初始化时没有尊重 `search_path`，说明它的 PostgreSQL 驱动/ORM 不兼容方案 3；这时退回“不同 Database”的方案会更稳。
+
+## 环境变量
+
+```env
+# CLI Proxy API PostgreSQL Store
+MANAGEMENT_PASSWORD="..."
+PGSTORE_DSN="postgresql://..."
+PGSTORE_SCHEMA="northflank_work"
+PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
+
+# GPT-Load
+GPTLOAD_PORT="3001"
+GPTLOAD_HOST="0.0.0.0"
+AUTH_KEY="..."
+ENCRYPTION_KEY="..."
+DATABASE_DSN="postgres://.../defaultdb?sslmode=require&search_path=gpt_load_northflank2"
+REDIS_DSN=""
+LOG_ENABLE_FILE="false"
+```
 
 ## Northflank 部署
 
 1. 创建 Northflank Service，选择从 Git 仓库构建。
 2. Root directory 选择 `Northflank/northflank2`。
 3. Dockerfile path 使用 `Dockerfile`。
-4. 暴露 HTTP 端口 `8317`。
-5. 如后续功能需要，继续暴露附加端口：`8085`、`1455`、`54545`、`51121`、`11451`。
-6. 在 Northflank Environment Variables 中按 `env` 文件添加变量。
+4. 暴露 HTTP 端口 `8317` 给 CLI Proxy API。
+5. 暴露 HTTP 端口 `3001` 给 GPT-Load。
+6. 如后续功能需要，继续暴露 CLI Proxy API 附加端口：`8085`、`1455`、`54545`、`51121`、`11451`。
+7. 在 Northflank Environment Variables 中按 `env` 文件添加变量。
 
 ## 后续聚合方式
 
@@ -55,5 +75,5 @@ PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
 ## 本地构建检查
 
 ```bash
-docker build -t northflank2-cliproxy-aggregation .
+docker build -t northflank2-cliproxy-gptload-aggregation .
 ```
