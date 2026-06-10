@@ -1,51 +1,83 @@
-# northflank2: CLI Proxy API + GPT-Load 聚合架构示例
+# northflank2: CLI Proxy API + GPT-Load + SearXNG 聚合架构
 
-这个目录参考 `Northflank-multi-Instance` 的架构设计：用一个 Northflank Service 承载多个进程。当前聚合 `cli-proxy-api` 和 `gpt-load`，后续可以继续在同一个 Dockerfile 中复制其他服务二进制，并在 `entrypoint.sh` 中追加后台启动逻辑。
+这个目录参考 `lumincc-north-multi-v1` 和 `cloudflare-docker-storage` 的设计：用一个 Northflank Service 承载多个进程，并为需要持久化的目录提供 Cloudflare Worker + R2 备份/恢复脚本。
 
-CLI Proxy API 使用 `PGSTORE_*` 环境变量；GPT-Load 使用 `DATABASE_DSN` 连接同一个 Aiven PostgreSQL，并通过不同 schema 做实例隔离。
+当前聚合：
 
-## 架构
+| 服务 | 端口 | 角色 | 说明 |
+| --- | --- | --- | --- |
+| CLI Proxy API | `8317` | 主服务 | 当前容器主等待进程，健康检查包含此端口 |
+| GPT-Load | `3001` | 后台服务 | AI API 透明代理、Key 轮询、管理后台 |
+| SearXNG | `8080` | 可选附加服务 | 轻量搜索服务，默认启用 |
+| CLI Proxy API 附加端口 | `8085`, `1455`, `54545`, `51121`, `11451` | 预留 | 按官方 Docker 文档保留 |
 
-| 文件 | 作用 |
-| --- | --- |
-| `Dockerfile` | 多阶段构建：从官方镜像提取 CLIProxyAPI 和 GPT-Load 二进制，再放入 Alpine 聚合运行时 |
-| `entrypoint.sh` | 聚合启动脚本；后台启动 GPT-Load，再启动 CLI Proxy API，并统一处理退出清理 |
-| `env` | Northflank 环境变量参考，不会复制进镜像 |
+## 文件结构
 
-## 当前服务
-
-| 服务 | 端口 | 用途 |
-| --- | --- | --- |
-| GPT-Load | `3001` | AI API 透明代理、Key 轮询、管理后台 |
-| CLI Proxy API | `8317` | 主 API 服务 |
-| CLI Proxy API 附加端口 | `8085`, `1455`, `54545`, `51121`, `11451` | 按官方 Docker 文档预留 |
-
-## GPT-Load 方案 3: 同库不同 Schema
-
-当前实例使用同一个 Aiven PostgreSQL 的 `defaultdb`，但把 GPT-Load 表放在独立 schema：
-
-```env
-DATABASE_DSN="postgres://avnadmin:...@pg-2cd0e13b-hutamefohiy46-c768.i.aivencloud.com:11191/defaultdb?sslmode=require&search_path=gpt_load_northflank2"
+```text
+northflank2/
+├── Dockerfile
+├── entrypoint.sh
+├── settings.yml
+├── env
+├── README.md
+└── scripts/
+    ├── backup-data.sh
+    ├── restore-data.sh
+    ├── backup-searxng.sh
+    ├── restore-searxng.sh
+    ├── backup-all.sh
+    └── scheduled-backup.sh
 ```
 
-部署前先在 Aiven PG Studio 或 psql 中执行：
+## 架构说明
 
-```sql
-CREATE SCHEMA IF NOT EXISTS gpt_load_northflank2;
+`Dockerfile` 使用多阶段构建：
+
+1. 从 `eceasy/cli-proxy-api:latest` 提取 `CLIProxyAPI`。
+2. 从 `ghcr.io/tbphp/gpt-load:latest` 提取 `gpt-load`。
+3. 以 `searxng/searxng:latest` 作为最终运行镜像，保留 SearXNG 的 Python/Granian 运行环境。
+4. 复制 `settings.yml` 到 `/etc/searxng/settings.yml`。
+5. 复制 R2 备份/恢复脚本到 `/usr/local/bin`。
+
+`entrypoint.sh` 启动顺序：
+
+```text
+/entrypoint.sh
+├── restore-data -> /app/data
+├── optional restore-searxng -> /etc/searxng
+├── start SearXNG background process -> :8080
+├── start scheduled-backup loop -> optional daily backup-all
+├── start GPT-Load background process -> :3001
+└── start CLI Proxy API primary process -> :8317
 ```
 
-如果 GPT-Load 初始化时没有尊重 `search_path`，说明它的 PostgreSQL 驱动/ORM 不兼容方案 3；这时退回“不同 Database”的方案会更稳。
+健康检查只检查 `CLI Proxy API` 和 `GPT-Load`，避免 SearXNG 上游搜索引擎波动导致整个容器被重启。
+
+## Northflank 部署
+
+1. 创建 Northflank Service，选择从 Git 仓库构建。
+2. Root directory 选择 `Northflank/northflank2`。
+3. Dockerfile path 使用 `Dockerfile`。
+4. 暴露 HTTP 端口 `8317` 给 CLI Proxy API。
+5. 暴露 HTTP 端口 `3001` 给 GPT-Load。
+6. 暴露 HTTP 端口 `8080` 给 SearXNG。
+7. 如后续功能需要，继续暴露 CLI Proxy API 附加端口：`8085`、`1455`、`54545`、`51121`、`11451`。
+8. 在 Northflank Environment Variables 中按本地 `env` 添加变量；仓库只提交脱敏的 `env.example`，密码类变量建议使用 Secret。
 
 ## 环境变量
 
+### CLI Proxy API
+
 ```env
-# CLI Proxy API PostgreSQL Store
 MANAGEMENT_PASSWORD="..."
 PGSTORE_DSN="postgresql://..."
 PGSTORE_SCHEMA="northflank_work"
 PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
+```
 
-# GPT-Load
+### GPT-Load
+
+```env
 GPTLOAD_PORT="3001"
 GPTLOAD_HOST="0.0.0.0"
 AUTH_KEY="..."
@@ -55,25 +87,95 @@ REDIS_DSN=""
 LOG_ENABLE_FILE="false"
 ```
 
-## Northflank 部署
+当前实例使用同一个 Aiven PostgreSQL 的 `defaultdb`，但把 GPT-Load 表放在独立 schema：
 
-1. 创建 Northflank Service，选择从 Git 仓库构建。
-2. Root directory 选择 `Northflank/northflank2`。
-3. Dockerfile path 使用 `Dockerfile`。
-4. 暴露 HTTP 端口 `8317` 给 CLI Proxy API。
-5. 暴露 HTTP 端口 `3001` 给 GPT-Load。
-6. 如后续功能需要，继续暴露 CLI Proxy API 附加端口：`8085`、`1455`、`54545`、`51121`、`11451`。
-7. 在 Northflank Environment Variables 中按 `env` 文件添加变量。
+```sql
+CREATE SCHEMA IF NOT EXISTS gpt_load_northflank2;
+```
 
-## 后续聚合方式
+如果 GPT-Load 初始化时没有尊重 `search_path`，说明它的 PostgreSQL 驱动/ORM 不兼容同库不同 schema；这时退回“不同 Database”的方案更稳。
 
-1. 在 `Dockerfile` 中增加新的源码阶段，例如 `FROM some-service:latest AS service-src`。
-2. 在最终 Alpine 运行时中 `COPY --from=service-src ...` 复制二进制或配置。
-3. 增加 `EXPOSE` 端口和可选 `HEALTHCHECK`。
-4. 在 `entrypoint.sh` 中后台启动新服务，记录 PID，并在 `cleanup()` 中清理。
+### SearXNG
+
+```env
+SEARXNG_ENABLED="true"
+SEARXNG_PORT="8080"
+SEARXNG_CONFIG_DIR="/etc/searxng"
+SEARXNG_SETTINGS_PATH="/etc/searxng/settings.yml"
+SEARXNG_BASE_URL="http://127.0.0.1:8080"
+INSTANCE_NAME="mcp-search"
+SEARXNG_SECRET_KEY="<openssl rand -hex 32>"
+GRANIAN_LOG_LEVEL="warning"
+GRANIAN_BLOCKING_THREADS="2"
+```
+
+`settings.yml` 是低内存配置：裁剪搜索引擎、开启 `html`/`json` 输出、关闭 metrics/image proxy/limiter。`server.secret_key` 会在启动时由 `SEARXNG_SECRET_KEY` 注入，生产环境必须在平台 Secret 中配置真实随机值。
+
+## Cloudflare R2 持久化
+
+本项目复用 `cloudflare-docker-storage` 的 Worker + R2 方案。主数据目录和 SearXNG 配置目录独立备份，避免多个服务共用同一个 R2 key。
+
+### 主数据目录
+
+```env
+DATA_DIR="/app/data"
+BACKUP_WORKER_URL="https://cloudflare-docker-storage.564510493.workers.dev"
+BACKUP_WORKER_API_KEY="<Northflank Secret>"
+BACKUP_PASSWORD="<openssl rand -base64 48>"
+BACKUP_OBJECT_KEY="northflank2/data.tar.gz.enc"
+RESTORE_IF_DATA_EXISTS="false"
+SHA256_VERIFY="warn"
+```
+
+### SearXNG 配置目录
+
+```env
+SEARXNG_ENABLE_BACKUP="false"
+SEARXNG_BACKUP_PASSWORD="<openssl rand -base64 48>"
+SEARXNG_BACKUP_OBJECT_KEY="northflank2/searxng-config.tar.gz.enc"
+SEARXNG_RESTORE_IF_DATA_EXISTS="false"
+```
+
+默认不启用 SearXNG 自动恢复，因为镜像已经内置 `settings.yml`。只有当你会在容器内动态修改 `/etc/searxng` 时，才建议设置：
+
+```env
+SEARXNG_ENABLE_BACKUP="true"
+```
+
+### 手动备份
+
+进入容器 Shell 后执行：
+
+```bash
+backup-all
+```
+
+也可以单独执行：
+
+```bash
+backup-data
+backup-searxng
+```
+
+### 定时备份
+
+内置 `scheduled-backup` 后台循环，不依赖 cron。调度使用容器本地时间；当前 `TZ=Asia/Shanghai`，所以 `SCHEDULED_BACKUP_TIME` 按北京时间解释。启用方式：
+
+```env
+TZ="Asia/Shanghai"
+SCHEDULED_BACKUP_ENABLED="true"
+SCHEDULED_BACKUP_TIME="03:30"
+SCHEDULED_BACKUP_RUN_ON_START="false"
+SCHEDULED_BACKUP_INTERVAL_SECONDS="60"
+BACKUP_ALL_STRICT="false"
+```
+
+`BACKUP_ALL_STRICT=false` 时，SearXNG 备份失败不会影响主流程。
 
 ## 本地构建检查
 
 ```bash
-docker build -t northflank2-cliproxy-gptload-aggregation .
+docker build -t northflank2-cliproxy-gptload-searxng .
 ```
+
+构建后本地运行时至少需要提供 CLI Proxy API、GPT-Load 的数据库相关环境变量；R2 备份变量可以先留空，脚本会跳过恢复。

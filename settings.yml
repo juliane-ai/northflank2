@@ -1,0 +1,39 @@
+# SearXNG 超低内存配置
+# ============================================================
+# 使用 use_default_settings.engines.keep_only 批量裁剪引擎
+# 配合 Granian 调优 + 关闭非必要功能
+# ============================================================
+
+use_default_settings:
+  engines:
+    keep_only:
+      # 核心文本搜索引擎（多留几个后备，避免单点被封）
+      - duckduckgo
+      - brave
+      - startpage
+      - mojeek
+      - wikipedia
+      - qwant
+      - presearch
+      - wiby
+      - yep
+
+general:
+  instance_name: "mcp-search"
+  enable_metrics: false
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "replace-with-SEARXNG_SECRET_KEY"
+  image_proxy: false
+  limiter: false
+
+outgoing:
+  request_timeout: 5.0
+  pool_connections: 10
+  pool_maxsize: 5
+  enable_http2: false
