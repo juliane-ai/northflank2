@@ -24,8 +24,9 @@ DATA = os.environ.get("DATA_DIR", "/opt/data")
 API = f"https://api.github.com/repos/{REPO}"
 TZ = timezone(timedelta(hours=8))
 REPORT_RE = re.compile(r"^20\d{2}-\d{2}-\d{2}-.+\.md$")
-# 密钥绝不上仓库：.env 与 config.yaml（含 api_key）都不同步；两者均可由 entrypoint/round 脚本在启动时从环境变量重新播种
-IGNORE = shutil.ignore_patterns(".env", "*.key", "config.yaml", "__pycache__", "*.pyc")
+# 密钥绝不上仓库：.env 与 config.yaml*（含 api_key，及 hermes 的 config.yaml.good.* 备份）都不同步；
+# backups/bin/cache 是 hermes 运行时产物（含 33MB tirith 二进制），同步上去是纯膨胀
+IGNORE = shutil.ignore_patterns(".env", "*.key", "*.pem", "config.yaml*", "backups/", "bin/", "cache/", "*.sock", "__pycache__/", "*.pyc")
 
 
 def _ignore_nonregular(dir, names):
