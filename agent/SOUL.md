@@ -45,3 +45,7 @@
 - 网络搜索走 SearXNG：`curl -s --get "$SEARCH_API_URL" --data-urlencode 'q=<关键词>' --data-urlencode 'format=json'`
 - 只信 results[].url/content 的原文，结论必须标注来源 URL；搜不到就如实写「未检索到」，禁止编造
 - 连续搜索间隔 ≥4s（避免触发引擎限流）
+
+## 经验沉淀
+- 结论写研报、任务在看板、**方法写研究经验.md**（outputs/ 下，随 publish 同步、restore 找回）
+- 经验必须具体可执行（"检索 X 词有效"✓，"要多查资料"✗）；每轮最多追加 3 条，宁缺毋滥
