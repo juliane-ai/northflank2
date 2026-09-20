@@ -1,0 +1,39 @@
+{
+  "name": "okx-copy-research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only OKX copy-trading research dashboard",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "OKX_MOCK=1 node --env-file-if-exists=.env --watch src/server.js",
+    "okx:migrate": "node --env-file-if-exists=.env src/okx-migrate.js",
+    "okx:test": "node --test test/okx-postgres.test.js test/auth.test.js test/okx-reader.test.js test/overview.test.js",
+    "stocks:start": "node --env-file-if-exists=.env src/stocks/server.js",
+    "stocks:dev": "STOCK_DEMO=1 node --env-file-if-exists=.env src/stocks/server.js",
+    "stocks:migrate": "node --env-file-if-exists=.env src/stocks/migrate.js",
+    "stocks:test": "node --test test/stocks*.test.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/geo-access.js && node --check src/lifecycle-model.js && node --check src/postgres.js && node --check src/okx-database.js && node --check src/okx-storage.js && node --check src/okx-postgres-auth.js && node --check src/okx-postgres-lifecycle.js && node --check src/okx-migrate.js && node --check src/okx-reader.js && node --check src/overview.js && node --check public/app.js && node --check public/login.js && node --check public/themes.js && node --check src/stocks/server.js && node --check src/stocks/store.js && node --check src/stocks/market.js && node --check src/stocks/auth.js && node --check src/stocks/monitor.js && node --check src/stocks/database.js && node --check src/stocks/migrate.js && node --check public/stocks/app.js && node --check src/signals/strategy.js && node --check src/signals/market.js && node --check src/signals/executor.js && node --check src/signals/store.js && node --check src/signals/monitor.js && node --check src/signals/server.js && node --check src/signals/runtime.js && node --check src/signals/auth.js && node --check src/signals/migrate.js && node --check src/signals/mcp.js && node --check public/signals/app.js && node --check public/signals/login.js && node --check src/signals/analysis.js && node --check src/signals/policy.js && node --check scripts/signals-local.mjs && node --check scripts/signals-analysis.mjs && node --check src/signals/report.js && node --check src/signals/research.js && node --check src/signals/observation.js && node --check scripts/signals-observe.mjs && node --check src/signals/discord.js && node --check src/vision-relay.js && node --check src/signals/vision.js && node --check scripts/signals-discord.mjs && node --check scripts/signals-runtime.mjs && node --check scripts/cloud-health.mjs",
+    "test": "node --test",
+    "test:persistence": "python3 -m unittest discover -s test/persistence -v",
+    "persistence:validate": "node --env-file-if-exists=.env scripts/persistence-local.mjs validate",
+    "persistence:probe": "node --env-file-if-exists=.env scripts/persistence-local.mjs probe",
+    "signals:start": "node --env-file-if-exists=.env src/signals/server.js",
+    "signals:local": "node scripts/signals-local.mjs",
+    "signals:migrate": "node --env-file-if-exists=.env src/signals/migrate.js",
+    "signals:test": "node --test test/signals*.test.js test/signal-mcp.test.js",
+    "signals:mcp": "node --env-file-if-exists=.env src/signals/mcp.js",
+    "signals:analyze": "node scripts/signals-analysis.mjs",
+    "signals:observe": "node scripts/signals-observe.mjs",
+    "persistence:mirror": "node --env-file-if-exists=.env scripts/persistence-local.mjs mirror",
+    "signals:discord": "node scripts/signals-discord.mjs"
+  },
+  "dependencies": {
+    "@tabler/core": "1.5.1",
+    "okx-api": "3.2.3",
+    "pg": "8.23.0"
+  }
+}

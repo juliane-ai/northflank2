@@ -1,6 +1,5 @@
 .env
-env
-*.log
-.DS_Store
-auths/
-logs/
+*.key
+*.pem
+__pycache__/
+*.pyc

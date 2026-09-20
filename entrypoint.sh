@@ -1,86 +1,79 @@
 #!/bin/sh
-set -e
+# northflank2 主入口：GitHub恢复(主) → R2恢复(可选) → 播种 pi provider/看板 → 研究循环 + 定时备份
+# 信号处理：sleep 一律 `& wait`，保证 docker stop 的 TERM 立即触发 cleanup
+set -eu
+
+OUT_DIR="${RESEARCH_OUTPUT_DIR:-/opt/data/outputs}"
+LOG_DIR="$OUT_DIR/logs"
+SESS_DIR="${PI_SESSION_DIR:-/opt/data/pi-sessions}"
+PI_HOME="${PI_HOME:-/root/.pi/agent}"
+BACKUP_PID=""
 
 cleanup() {
-    echo "Received shutdown signal, stopping services..."
-
-    if [ -n "${SCHEDULED_BACKUP_PID:-}" ]; then
-        kill "$SCHEDULED_BACKUP_PID" 2>/dev/null || true
-        wait "$SCHEDULED_BACKUP_PID" 2>/dev/null || true
-    fi
-
-    if [ -n "${SEARXNG_PID:-}" ]; then
-        kill "$SEARXNG_PID" 2>/dev/null || true
-        wait "$SEARXNG_PID" 2>/dev/null || true
-    fi
-
-    if [ -n "${GPTLOAD_PID:-}" ]; then
-        kill "$GPTLOAD_PID" 2>/dev/null || true
-        wait "$GPTLOAD_PID" 2>/dev/null || true
-    fi
-
-    if [ -n "${CLIPROXY_PID:-}" ]; then
-        kill "$CLIPROXY_PID" 2>/dev/null || true
-        wait "$CLIPROXY_PID" 2>/dev/null || true
-    fi
+    echo "[entrypoint] stopping..."
+    [ -n "$BACKUP_PID" ] && kill "$BACKUP_PID" 2>/dev/null || true
 }
-
-start_searxng() {
-    if [ "${SEARXNG_ENABLED:-true}" != "true" ]; then
-        echo "SearXNG disabled; set SEARXNG_ENABLED=true to enable"
-        return 0
-    fi
-
-    export SEARXNG_PORT="${SEARXNG_PORT:-8080}"
-    export SEARXNG_CONFIG_DIR="${SEARXNG_CONFIG_DIR:-/etc/searxng}"
-    export SEARXNG_SETTINGS_PATH="${SEARXNG_SETTINGS_PATH:-$SEARXNG_CONFIG_DIR/settings.yml}"
-    export SEARXNG_ENABLE_BACKUP="${SEARXNG_ENABLE_BACKUP:-false}"
-
-    mkdir -p "$SEARXNG_CONFIG_DIR"
-
-    if [ "$SEARXNG_ENABLE_BACKUP" = "true" ]; then
-        restore-searxng || echo "searxng restore failed; continuing startup"
-    else
-        echo "SearXNG backup restore disabled; set SEARXNG_ENABLE_BACKUP=true to enable"
-    fi
-
-    if [ -n "${SEARXNG_SECRET_KEY:-}" ]; then
-        sed -i "s|secret_key: .*|secret_key: \"${SEARXNG_SECRET_KEY}\"|" "$SEARXNG_SETTINGS_PATH"
-    else
-        echo "WARNING: SEARXNG_SECRET_KEY is not set; using settings.yml fallback secret_key"
-    fi
-
-    echo "Starting SearXNG on 0.0.0.0:${SEARXNG_PORT}..."
-    /usr/local/searxng/entrypoint.sh &
-    SEARXNG_PID=$!
-}
-
 trap cleanup TERM INT
 
-export DATA_DIR="${DATA_DIR:-/app/data}"
-export SCHEDULED_BACKUP_ENABLED="${SCHEDULED_BACKUP_ENABLED:-false}"
-export SCHEDULED_BACKUP_TIME="${SCHEDULED_BACKUP_TIME:-03:30}"
-export SCHEDULED_BACKUP_RUN_ON_START="${SCHEDULED_BACKUP_RUN_ON_START:-false}"
-export SCHEDULED_BACKUP_INTERVAL_SECONDS="${SCHEDULED_BACKUP_INTERVAL_SECONDS:-60}"
+sleep_until() { sleep "$1" & _pid=$!; wait "$_pid" || true; }
+log() { echo "[entrypoint] $*"; }
 
-mkdir -p "$DATA_DIR"
-restore-data || echo "northflank2 data restore failed; continuing startup"
+if [ -z "${NEW_API_KEY:-}" ]; then
+    log "WARNING: NEW_API_KEY 未配置，研究轮会失败；循环仍照常启动"
+fi
 
-start_searxng
+# --- 播种 pi 自定义 provider（new-api 中转，OpenAI 兼容）---
+mkdir -p "$PI_HOME"
+if [ ! -f "$PI_HOME/models.json" ]; then
+    # shellcheck disable=SC2086
+    python3 - "$PI_HOME/models.json" "$NEW_API_BASE" "$RESEARCH_MODELS" <<'PY'
+import json, sys
+_, path, base, models_csv = sys.argv
+models = [m.strip() for m in models_csv.split(",") if m.strip()]
+cfg = {"providers": {"newapi": {
+    "baseUrl": base.rstrip("/") + "/v1",
+    "api": "openai-completions",
+    "apiKey": "newapi",  # 占位，运行时由 --api-key 传入真实 key
+    "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
+    "models": [{"id": m} for m in models],
+}}}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PY
+    log "seeded $PI_HOME/models.json"
+fi
 
+# --- GitHub 恢复（主持久化通道：本地缺看板时从仓库补回资料+会话记忆）---
+if [ -n "${GITHUB_PAT:-}" ] && [ -n "${GITHUB_REPO:-}" ] && [ ! -f "$OUT_DIR/研究看板.md" ]; then
+    mkdir -p "$OUT_DIR" "$LOG_DIR"
+    python3 /opt/scripts/publish.py restore >> "$LOG_DIR/publish.log" 2>&1 || log "github restore failed（不影响启动）"
+fi
+
+# --- 播种研究看板（仅缺失时，恢复的数据优先）---
+mkdir -p "$OUT_DIR" "$LOG_DIR" "$SESS_DIR"
+if [ ! -f "$OUT_DIR/研究看板.md" ]; then
+    cp /opt/agent/研究看板-seed.md "$OUT_DIR/研究看板.md"
+    log "seeded 研究看板.md"
+fi
+
+# --- R2 恢复（配置了才生效）---
+restore-data || log "restore failed/跳过，继续启动"
+
+# --- 定时备份循环（可选）---
 scheduled-backup &
-SCHEDULED_BACKUP_PID=$!
+BACKUP_PID=$!
 
-cd /app
-PORT="${GPTLOAD_PORT:-3001}" HOST="${GPTLOAD_HOST:-0.0.0.0}" /app/gpt-load &
-GPTLOAD_PID=$!
-
-cd /CLIProxyAPI
-./CLIProxyAPI &
-CLIPROXY_PID=$!
-
-wait "$CLIPROXY_PID"
-EXIT_CODE=$?
-
-cleanup
-exit "$EXIT_CODE"
+# --- 研究循环（前台主进程）---
+log "first research round in ${RESEARCH_FIRST_DELAY_SECONDS}s, then every ${RESEARCH_INTERVAL_SECONDS}s"
+sleep_until "$RESEARCH_FIRST_DELAY_SECONDS"
+while :; do
+    /opt/scripts/research-round.sh || log "research round failed（不影响主循环）"
+    if [ -n "${GITHUB_PAT:-}" ] && [ -n "${GITHUB_REPO:-}" ]; then
+        mkdir -p "$DATA_DIR/logs"
+        python3 /opt/scripts/publish.py >> "$DATA_DIR/logs/publish.log" 2>&1 || log "publish failed（不影响主循环）"
+    fi
+    if [ -n "${BACKUP_PASSWORD:-}" ]; then
+        backup-data || log "post-round backup failed"
+    fi
+    sleep_until "$RESEARCH_INTERVAL_SECONDS"
+done

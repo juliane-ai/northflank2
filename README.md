@@ -1,181 +1,78 @@
-# northflank2: CLI Proxy API + GPT-Load + SearXNG 聚合架构
+# northflank2 — 7×24 量化研究员（pi agent 版）
 
-这个目录参考 `lumincc-north-multi-v1` 和 `cloudflare-docker-storage` 的设计：用一个 Northflank Service 承载多个进程，并为需要持久化的目录提供 Cloudflare Worker + R2 备份/恢复脚本。
+一个部署在 Northflank、全天候运行的量化策略研究 AI。基于 [pi coding agent](https://github.com/earendil-works/pi-coding-agent)
+（`pi -p` 非交互 + session 续接），持续研究 `g02-ritup-repo02-mix`（OKX 跟单研究台）的
+量化策略与 agent 架构，产出研报到持久化目录。
 
-当前聚合：
+姊妹项目 `northflank1` 是同一套研究的 **Hermes Agent 内核版**（带 dashboard），两者共用同一份
+研究人格与知识库，可作 A/B 对比。
 
-| 服务 | 端口 | 角色 | 说明 |
-| --- | --- | --- | --- |
-| CLI Proxy API | `8317` | 主服务 | 当前容器主等待进程，健康检查包含此端口 |
-| GPT-Load | `3001` | 后台服务 | AI API 透明代理、Key 轮询、管理后台 |
-| SearXNG | `8080` | 可选附加服务 | 轻量搜索服务，默认启用 |
-| CLI Proxy API 附加端口 | `8085`, `1455`, `54545`, `51121`, `11451` | 预留 | 按官方 Docker 文档保留 |
-
-## 文件结构
+## 架构
 
 ```text
-northflank2/
-├── Dockerfile
-├── entrypoint.sh
-├── settings.yml
-├── env
-├── README.md
-└── scripts/
-    ├── backup-data.sh
-    ├── restore-data.sh
-    ├── backup-searxng.sh
-    ├── restore-searxng.sh
-    ├── backup-all.sh
-    └── scheduled-backup.sh
+northflank2/（本仓库 = Northflank 构建上下文）
+├── Dockerfile              node:24-bookworm-slim + pi + python3
+├── entrypoint.sh           启动：R2恢复 → 播种 models.json/看板 → 研究循环 + 备份循环
+├── agent/
+│   ├── SOUL.md             「量化研究员」人格（与 northflank1 完全一致）
+│   ├── round-prompt.md     每轮研究任务指令
+│   └── 研究看板-seed.md     初始研究主题队列
+├── knowledge/              g02 仓库只读快照，烤进镜像挂 /knowledge
+├── scripts/
+│   ├── research-round.sh   单轮研究：pi --continue 非交互执行，session 续接积累上下文
+│   └── backup-data.sh 等   R2 (Cloudflare Worker) 备份/恢复
+└── old/                    旧模板，不参与构建，不要动
 ```
 
-## 架构说明
-
-`Dockerfile` 使用多阶段构建：
-
-1. 从 `eceasy/cli-proxy-api:latest` 提取 `CLIProxyAPI`。
-2. 从 `ghcr.io/tbphp/gpt-load:latest` 提取 `gpt-load`。
-3. 以 `searxng/searxng:latest` 作为最终运行镜像，保留 SearXNG 的 Python/Granian 运行环境。
-4. 复制 `settings.yml` 到 `/etc/searxng/settings.yml`。
-5. 复制 R2 备份/恢复脚本到 `/usr/local/bin`。
-
-`entrypoint.sh` 启动顺序：
+运行时（无 dashboard，Northflank 用 **Background Worker** 类型部署）：
 
 ```text
-/entrypoint.sh
-├── restore-data -> /app/data
-├── optional restore-searxng -> /etc/searxng
-├── start SearXNG background process -> :8080
-├── start scheduled-backup loop -> optional daily backup-all
-├── start GPT-Load background process -> :3001
-└── start CLI Proxy API primary process -> :8317
+entrypoint.sh
+├── restore-data（R2，可选）→ /opt/data
+├── 播种 /root/.pi/agent/models.json 与 outputs/研究看板.md（仅在缺失时）
+├── scheduled-backup 循环（可选）
+└── 研究循环：首轮延时后开跑，之后每 RESEARCH_INTERVAL_SECONDS 一轮
+    每轮 = pi -p --continue --session-dir /opt/data/pi-sessions（上下文跨轮累积）
 ```
 
-健康检查只检查 `CLI Proxy API` 和 `GPT-Load`，避免 SearXNG 上游搜索引擎波动导致整个容器被重启。
+LLM 走 new-api 中转（OpenAI 兼容，`models.json` 声明自定义 provider `newapi`），默认 `z-ai/glm-5.3`。
+
+## 研究搜索
+
+Agent 研究时可调用已部署的 SearXNG JSON API（`SEARCH_API_URL`，默认指向 g02-ritup-repo01-search 服务）检索外部资料；关键结论需附来源 URL。
 
 ## Northflank 部署
 
-1. 创建 Northflank Service，选择从 Git 仓库构建。
-2. Root directory 选择 `Northflank/northflank2`。
-3. Dockerfile path 使用 `Dockerfile`。
-4. 暴露 HTTP 端口 `8317` 给 CLI Proxy API。
-5. 暴露 HTTP 端口 `3001` 给 GPT-Load。
-6. 暴露 HTTP 端口 `8080` 给 SearXNG。
-7. 如后续功能需要，继续暴露 CLI Proxy API 附加端口：`8085`、`1455`、`54545`、`51121`、`11451`。
-8. 在 Northflank Environment Variables 中按本地 `env` 添加变量；仓库只提交脱敏的 `env.example`，密码类变量建议使用 Secret。
+1. 创建 **Background Worker** Service（无 HTTP 端口），从 Git 仓库 `juliane-ai/northflank2` 构建。
+2. 环境变量与 northflank1 完全一致（见 `env.example`），仅 `BACKUP_OBJECT_KEY` 必须不同
+   （默认 `northflank2/data.tar.gz.enc`）。
+3. 看研究进展：R2 备份拉回 `outputs/`，或进容器看 `/opt/data/outputs/`。
 
-## 环境变量
-
-### CLI Proxy API
-
-```env
-MANAGEMENT_PASSWORD="..."
-PGSTORE_DSN="postgresql://..."
-PGSTORE_SCHEMA="northflank_work"
-PGSTORE_LOCAL_PATH="/tmp/pgstore_work"
-```
-
-### GPT-Load
-
-```env
-GPTLOAD_PORT="3001"
-GPTLOAD_HOST="0.0.0.0"
-AUTH_KEY="..."
-ENCRYPTION_KEY="..."
-DATABASE_DSN="postgres://.../defaultdb?sslmode=require&search_path=gpt_load_northflank2"
-REDIS_DSN=""
-LOG_ENABLE_FILE="false"
-```
-
-当前实例使用同一个 Aiven PostgreSQL 的 `defaultdb`，但把 GPT-Load 表放在独立 schema：
-
-```sql
-CREATE SCHEMA IF NOT EXISTS gpt_load_northflank2;
-```
-
-如果 GPT-Load 初始化时没有尊重 `search_path`，说明它的 PostgreSQL 驱动/ORM 不兼容同库不同 schema；这时退回“不同 Database”的方案更稳。
-
-### SearXNG
-
-```env
-SEARXNG_ENABLED="true"
-SEARXNG_PORT="8080"
-SEARXNG_CONFIG_DIR="/etc/searxng"
-SEARXNG_SETTINGS_PATH="/etc/searxng/settings.yml"
-SEARXNG_BASE_URL="http://127.0.0.1:8080"
-INSTANCE_NAME="mcp-search"
-SEARXNG_SECRET_KEY="<openssl rand -hex 32>"
-GRANIAN_LOG_LEVEL="warning"
-GRANIAN_BLOCKING_THREADS="2"
-```
-
-`settings.yml` 是低内存配置：裁剪搜索引擎、开启 `html`/`json` 输出、关闭 metrics/image proxy/limiter。`server.secret_key` 会在启动时由 `SEARXNG_SECRET_KEY` 注入，生产环境必须在平台 Secret 中配置真实随机值。
-
-## Cloudflare R2 持久化
-
-本项目复用 `cloudflare-docker-storage` 的 Worker + R2 方案。主数据目录和 SearXNG 配置目录独立备份，避免多个服务共用同一个 R2 key。
-
-### 主数据目录
-
-```env
-DATA_DIR="/app/data"
-BACKUP_WORKER_URL="https://cloudflare-docker-storage.564510493.workers.dev"
-BACKUP_WORKER_API_KEY="<Northflank Secret>"
-BACKUP_PASSWORD="<openssl rand -base64 48>"
-BACKUP_OBJECT_KEY="northflank2/data.tar.gz.enc"
-RESTORE_IF_DATA_EXISTS="false"
-SHA256_VERIFY="warn"
-```
-
-### SearXNG 配置目录
-
-```env
-SEARXNG_ENABLE_BACKUP="false"
-SEARXNG_BACKUP_PASSWORD="<openssl rand -base64 48>"
-SEARXNG_BACKUP_OBJECT_KEY="northflank2/searxng-config.tar.gz.enc"
-SEARXNG_RESTORE_IF_DATA_EXISTS="false"
-```
-
-默认不启用 SearXNG 自动恢复，因为镜像已经内置 `settings.yml`。只有当你会在容器内动态修改 `/etc/searxng` 时，才建议设置：
-
-```env
-SEARXNG_ENABLE_BACKUP="true"
-```
-
-### 手动备份
-
-进入容器 Shell 后执行：
+## 本地构建与冒烟
 
 ```bash
-backup-all
+docker build -t quant-pi .
+# 单轮研究冒烟（真实调用 LLM）
+docker run --rm -e NEW_API_KEY=sk-xxx \
+  --entrypoint /opt/scripts/research-round.sh quant-pi
+# 完整入口冒烟（不调 LLM）
+docker run --rm -e NEW_API_KEY=sk-xxx -e RESEARCH_FIRST_DELAY_SECONDS=3600 quant-pi
 ```
 
-也可以单独执行：
+## 与 northflank1 的差异
 
-```bash
-backup-data
-backup-searxng
-```
+| | northflank1 (Hermes) | northflank2 (pi) |
+| --- | --- | --- |
+| 内核 | nousresearch/hermes-agent 官方镜像 | npm 安装 pi（固定版本） |
+| 常驻形态 | gateway + dashboard :9119 | 纯循环，无端口 |
+| 跨轮记忆 | hermes session（--continue 命名会话） | pi session 文件（--session-dir） |
+| 部署类型 | Combined Service（带端口） | Background Worker |
+| 运维入口 | 浏览器 dashboard 直接对话/查看 | 日志 + outputs 文件 |
 
-### 定时备份
+研究人格、知识库、看板、两边一致：产出与会话记忆主通道是私有 GitHub 仓库（每轮全量同步 /opt/data → 仓库 data/，新研报开 issue、开 PR；启动时自动恢复），R2 为可选冷备（默认关，需 BACKUP_* 变量）。
 
-内置 `scheduled-backup` 后台循环，不依赖 cron。调度使用容器本地时间；当前 `TZ=Asia/Shanghai`，所以 `SCHEDULED_BACKUP_TIME` 按北京时间解释。启用方式：
+## 注意
 
-```env
-TZ="Asia/Shanghai"
-SCHEDULED_BACKUP_ENABLED="true"
-SCHEDULED_BACKUP_TIME="03:30"
-SCHEDULED_BACKUP_RUN_ON_START="false"
-SCHEDULED_BACKUP_INTERVAL_SECONDS="60"
-BACKUP_ALL_STRICT="false"
-```
-
-`BACKUP_ALL_STRICT=false` 时，SearXNG 备份失败不会影响主流程。
-
-## 本地构建检查
-
-```bash
-docker build -t northflank2-cliproxy-gptload-searxng .
-```
-
-构建后本地运行时至少需要提供 CLI Proxy API、GPT-Load 的数据库相关环境变量；R2 备份变量可以先留空，脚本会跳过恢复。
+- pi 以 root 运行且带 bash 工具，但容器本身就是隔离边界；不要往镜像/挂载里放敏感凭据以外的 anything。
+- `/knowledge` 对 agent 只读；无真实行情数据源，结论会标注「待验证」。
+- 研究日志在 `/opt/data/outputs/logs/round-*.log`。

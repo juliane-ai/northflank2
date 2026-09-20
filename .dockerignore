@@ -1,8 +1,8 @@
-node_modules
 .git
+old/
 .env
-env
 *.log
-.DS_Store
-auths
-logs
+data/
+.octocode*
+.pi/
+knowledge/g02/node_modules
