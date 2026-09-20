@@ -23,9 +23,9 @@ PI_HOME="${PI_HOME:-/root/.pi/agent}"
 if [ ! -f "$PI_HOME/models.json" ] && [ -n "${NEW_API_BASE:-}" ]; then
     mkdir -p "$PI_HOME"
     # shellcheck disable=SC2086
-    python3 - "$PI_HOME/models.json" "$NEW_API_BASE" "$RESEARCH_MODELS" <<'PY'
-import json, sys
-_, path, base, models_csv = sys.argv
+    python3 - "$PI_HOME/models.json" "$NEW_API_BASE" "$RESEARCH_MODELS" "$RESEARCH_MODEL" <<'PY'
+import json, os, sys
+_, path, base, models_csv, default_model = sys.argv
 models = [m.strip() for m in models_csv.split(",") if m.strip()]
 cfg = {"providers": {"newapi": {
     "baseUrl": base.rstrip("/") + "/v1",
@@ -39,6 +39,8 @@ cfg = {"providers": {"newapi": {
 }}}
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
+settings = os.path.join(os.path.dirname(path), "settings.json")
+open(settings, "w").write('{"defaultModel": "newapi/%s"}\n' % default_model)
 PY
 fi
 

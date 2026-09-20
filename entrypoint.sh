@@ -44,6 +44,9 @@ with open(path, "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
 PY
     log "seeded $PI_HOME/models.json"
+    # 默认模型由 settings.json defaultModel 控制；无条件写，保证 RESEARCH_MODEL 环境变量优先于镜像烤入的静态值
+    printf '{"defaultModel": "newapi/%s"}\n' "$RESEARCH_MODEL" > "$PI_HOME/settings.json"
+    log "seeded $PI_HOME/settings.json (defaultModel=$RESEARCH_MODEL)"
 fi
 
 # --- GitHub 恢复（主持久化通道：本地缺看板时从仓库补回资料+会话记忆）---

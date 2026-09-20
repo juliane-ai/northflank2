@@ -24,6 +24,8 @@ RUN apt-get -o Acquire::Retries=3 update \
 # g02 只读知识库 + 研究人格 + 运维脚本
 COPY knowledge/ /knowledge/
 COPY agent/ /opt/agent/
+# 静态 pi 配置烤进 HOME：裸容器（不跑 entrypoint）里 pi 也直接可用（默认 nemotron + $NEW_API_KEY 插值）
+COPY agent/.pi/agent/ /root/.pi/agent/
 COPY scripts/ /opt/scripts/
 COPY entrypoint.sh /entrypoint.sh
 
