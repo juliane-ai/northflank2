@@ -76,3 +76,10 @@ docker run --rm -e NEW_API_KEY=sk-xxx -e RESEARCH_FIRST_DELAY_SECONDS=3600 quant
 - pi 以 root 运行且带 bash 工具，但容器本身就是隔离边界；不要往镜像/挂载里放敏感凭据以外的 anything。
 - `/knowledge` 对 agent 只读；无真实行情数据源，结论会标注「待验证」。
 - 研究日志在 `/opt/data/outputs/logs/round-*.log`。
+
+## 已知限制（ponytail: 记录上限，触发再升级）
+
+- **双 agent 同仓库会重复研究**：两个服务共用一个 GitHub 研究仓库时会抢同一个「最高优先级待研究」主题（已实测重复）。建议只跑一个服务，或给两边错开 `RESEARCH_FIRST_DELAY_SECONDS` 并人工分派主题。
+- **仓库增长**：每轮 push 含会话/状态二进制（约 MB 级/轮，6h 一轮）。定期合并 PR 并清理旧 `research/*` 分支即可；超过 1GB 再考虑裁剪同步范围。
+- **模型兼容**：`openai/gpt-oss-20b` 经 openai-completions 中转会产出畸形工具调用（工具名混入 `<|channel|>` 残留，上游 IndexError）。研究轮用 `z-ai/glm-5.3-flash`（默认）。
+- **restore 语义**：重启后从最新 `research/*` 分支找回数据；若上一轮 publish 失败（已加 3 次重试），看板状态回退一轮，最坏情况重做一次已完成主题（publish 的 issue 标题去重可挡住重复开题）。
