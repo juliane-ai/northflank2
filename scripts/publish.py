@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,19 @@ REPORT_RE = re.compile(r"^20\d{2}-\d{2}-\d{2}-.+\.md$")
 IGNORE = shutil.ignore_patterns(".env", "*.key", "config.yaml", "__pycache__", "*.pyc")
 
 
+def _ignore_nonregular(dir, names):
+    """跳过 socket/fifo 等非普通文件：gateway 运行时会在 DATA_DIR 放 unix socket，
+    copytree 拷它们直接 Errno 6 崩掉（Northflank 完整启动后 publish 失败的元凶）。"""
+    skip = list(IGNORE(dir, names))
+    for n in names:
+        p = os.path.join(dir, n)
+        if n in skip:
+            continue
+        if os.path.exists(p) and not os.path.isfile(p) and not os.path.isdir(p):
+            skip.append(n)
+    return skip
+
+
 def api(method, path, body=None):
     req = urllib.request.Request(
         API + path, method=method,
@@ -39,6 +53,21 @@ def api(method, path, body=None):
 def git(*args, cwd, check=True):
     return subprocess.run(("git", *args), cwd=cwd, check=check,
                           capture_output=True, text=True)
+
+
+def git_push_retry(branch, cwd, attempts=3):
+    """push 对瞬断（代理 TLS 掐断、网络抖动）重试；大 postBuffer 缓解 rpc rewind 报错。"""
+    git("config", "http.postBuffer", "524288000", cwd=cwd)
+    last = None
+    for i in range(attempts):
+        r = git("push", "-u", "origin", branch, cwd=cwd, check=False)
+        if r.returncode == 0:
+            return r
+        last = r
+        if i < attempts - 1:
+            time.sleep(5 * (i + 1))
+    raise subprocess.CalledProcessError(last.returncode, last.args,
+                                        stdout=last.stdout, stderr=last.stderr)
 
 
 def clone_to(work):
@@ -60,7 +89,7 @@ def publish():
     clone_to(work)
     empty = git("rev-parse", "--verify", "HEAD", cwd=work, check=False).returncode != 0
 
-    shutil.copytree(DATA, os.path.join(work, "data"), dirs_exist_ok=True, ignore=IGNORE)
+    shutil.copytree(DATA, os.path.join(work, "data"), dirs_exist_ok=True, ignore=_ignore_nonregular)
     if not git("status", "--porcelain", cwd=work).stdout.strip():
         print("[publish] 无新产出，跳过")
         return
@@ -92,14 +121,14 @@ def publish():
     if empty:
         git("checkout", "-B", BASE, cwd=work)
         git("commit", "-m", msg, cwd=work)
-        git("push", "-u", "origin", BASE, cwd=work)
+        git_push_retry(BASE, cwd=work)
         print(f"[publish] 空仓库已引导 {BASE} 分支（首轮不开发 PR）")
         return
 
     branch = f"research/{stamp}"
     git("checkout", "-B", branch, cwd=work)
     git("commit", "-m", msg, cwd=work)
-    git("push", "-u", "origin", branch, cwd=work)
+    git_push_retry(branch, cwd=work)
 
     closes = "\n".join(f"Closes #{n}" for n in issue_nums.values())
     pr = api("POST", "/pulls", {

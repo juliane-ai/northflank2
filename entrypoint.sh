@@ -70,7 +70,7 @@ while :; do
     /opt/scripts/research-round.sh || log "research round failed（不影响主循环）"
     if [ -n "${GITHUB_PAT:-}" ] && [ -n "${GITHUB_REPO:-}" ]; then
         mkdir -p "$DATA_DIR/logs"
-        python3 /opt/scripts/publish.py >> "$DATA_DIR/logs/publish.log" 2>&1 || log "publish failed（不影响主循环）"
+        python3 /opt/scripts/publish.py >> "$DATA_DIR/logs/publish.log" 2>&1 || { tail -15 "$DATA_DIR/logs/publish.log" >&2; log "publish failed（详情见上方 stderr）"; }
     fi
     if [ -n "${BACKUP_PASSWORD:-}" ]; then
         backup-data || log "post-round backup failed"
