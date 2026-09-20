@@ -34,6 +34,9 @@ cfg = {"providers": {"newapi": {
     "baseUrl": base.rstrip("/") + "/v1",
     "api": "openai-completions",
     "apiKey": "newapi",  # 占位，运行时由 --api-key 传入真实 key
+    # nemotron 系思考控制：chat_template_kwargs.enable_thinking（无 low/med/high 档位，开=最高档）
+    "thinkingFormat": "chat-template",
+    "chatTemplateKwargs": {"enable_thinking": {"$var": "thinking.enabled"}},
     "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
     "models": [{"id": m} for m in models],
 }}}
