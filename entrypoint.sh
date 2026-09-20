@@ -56,11 +56,11 @@ if [ ! -f "$OUT_DIR/研究看板.md" ]; then
     log "seeded 研究看板.md"
 fi
 
-# --- R2 恢复（配置了才生效）---
-restore-data || log "restore failed/跳过，继续启动"
+# --- R2 恢复（配置了才生效； Northflank PATH 不含 /opt/scripts，必须全路径）---
+/opt/scripts/restore-data.sh || log "restore failed/跳过，继续启动"
 
 # --- 定时备份循环（可选）---
-scheduled-backup &
+/opt/scripts/scheduled-backup.sh &
 BACKUP_PID=$!
 
 # --- 研究循环（前台主进程）---
