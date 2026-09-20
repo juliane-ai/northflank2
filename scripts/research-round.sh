@@ -57,6 +57,9 @@ timeout "$ROUND_TIMEOUT" pi -p "$@" \
 rc=$?
 echo "[research-round] exit=$rc $(date '+%F %T')" >> "$log"
 
+# 看板回写（agent 常在报告写完后被超时掐掉，看板更新不靠自觉）
+python3 /opt/scripts/board-sync.py >> "$log" 2>&1 || true
+
 # 轮次结果摘要（研报数 + 最新看板更新时间）
 ls -1t "$OUT_DIR"/20*.md 2>/dev/null | head -3 >> "$log" || true
 exit 0
