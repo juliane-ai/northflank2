@@ -30,7 +30,7 @@ models = [m.strip() for m in models_csv.split(",") if m.strip()]
 cfg = {"providers": {"newapi": {
     "baseUrl": base.rstrip("/") + "/v1",
     "api": "openai-completions",
-    "apiKey": "newapi",  # 占位，运行时由 --api-key 传入真实 key
+    "apiKey": "$NEW_API_KEY",  # 环境变量插值：容器内裸跑 pi 也能带上真实 key（脚本仍显式 --api-key 双保险)
     # nemotron 系思考控制：chat_template_kwargs.enable_thinking（无 low/med/high 档位，开=最高档）
     "thinkingFormat": "chat-template",
     "chatTemplateKwargs": {"enable_thinking": {"$var": "thinking.enabled"}},
