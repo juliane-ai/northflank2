@@ -45,7 +45,7 @@ $selected_topic
 
 本 agent 只允许研究上面这一条看板项；更高优先级但不属于本 agent 分区的主题也必须跳过。不要新建、改写或研究其他主题。
 EOF
-    chmod 600 "$query_file"
+    chmod 644 "$query_file"
 fi
 
 PI_HOME="${PI_HOME:-/root/.pi/agent}"
