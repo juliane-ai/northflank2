@@ -52,6 +52,15 @@ if [ "$SCHEDULED_BACKUP_ENABLED" != "true" ]; then
   exit 0
 fi
 
+if [ -z "${BACKUP_PASSWORD:-}" ]; then
+  log "disabled; SCHEDULED_BACKUP_ENABLED=true but BACKUP_PASSWORD is empty"
+  exit 0
+fi
+if [ "${BACKUP_UPLOAD:-true}" = "true" ] && [ -z "${BACKUP_WORKER_API_KEY:-}" ]; then
+  log "disabled; upload enabled but BACKUP_WORKER_API_KEY is empty"
+  exit 0
+fi
+
 log "enabled; daily backup-data time=$SCHEDULED_BACKUP_TIME, interval=${SCHEDULED_BACKUP_INTERVAL_SECONDS}s"
 [ -n "${TZ:-}" ] && log "timezone TZ=$TZ"
 
