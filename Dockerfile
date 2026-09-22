@@ -3,6 +3,7 @@ FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35
 ENV TZ=Asia/Shanghai \
     DEBIAN_FRONTEND=noninteractive \
     NEW_API_BASE=https://ai--new-api--7jgxq8y8tx2h.code.run \
+    RESEARCH_TOPIC_IDS=9,10 \
     RESEARCH_MODEL=nvidia/nemotron-3-super-120b-a12b \
     RESEARCH_MODELS=z-ai/glm-5.3,z-ai/glm-5.3-flash,deepseek-ai/deepseek-v4-flash-0731,nvidia/nemotron-3-super-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b,openai/gpt-oss-20b \
     RESEARCH_INTERVAL_SECONDS=21600 \

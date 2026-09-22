@@ -17,8 +17,22 @@ if [ ! -f "$OUT_DIR/研究看板.md" ] && [ -f /opt/agent/研究看板-seed.md ]
 fi
 ts=$(date +%Y%m%d-%H%M%S)
 log="$LOG_DIR/round-$ts.log"
+query_file="$PROMPT_FILE"
+if [ -n "${RESEARCH_TOPIC_IDS:-}" ]; then
+    case "$RESEARCH_TOPIC_IDS" in
+        *[!0-9,]*|,*|*,,*|,*) echo "[research-round] invalid RESEARCH_TOPIC_IDS=$RESEARCH_TOPIC_IDS" >> "$log"; exit 0 ;;
+    esac
+    query_file="$LOG_DIR/round-$ts.prompt.md"
+    cat "$PROMPT_FILE" > "$query_file"
+    cat >> "$query_file" <<EOF
 
-# provider 配置自足：entrypoint 播种过则跳过（幂等）
+## 主题分区硬约束
+
+本 agent 只允许研究看板编号属于 { $RESEARCH_TOPIC_IDS } 的「待研究」项；更高优先级但不属于该集合的主题也必须跳过。若集合内没有可研究主题，不要新建研报，不要改看板状态，只输出「本轮无分配主题」。
+EOF
+    chmod 600 "$query_file"
+fi
+
 PI_HOME="${PI_HOME:-/root/.pi/agent}"
 if [ ! -f "$PI_HOME/models.json" ] && [ -n "${NEW_API_BASE:-}" ]; then
     mkdir -p "$PI_HOME"
@@ -59,7 +73,7 @@ timeout "$ROUND_TIMEOUT" pi -p "$@" \
     --model "$RESEARCH_MODEL" \
     --thinking high \
     --api-key "$NEW_API_KEY" \
-    "$(cat "$PROMPT_FILE")" >> "$log" 2>&1
+    "$(cat "$query_file")" >> "$log" 2>&1
 rc=$?
 echo "[research-round] exit=$rc $(date '+%F %T')" >> "$log"
 
