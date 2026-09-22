@@ -80,6 +80,6 @@ docker run --rm -e NEW_API_KEY=sk-xxx -e RESEARCH_FIRST_DELAY_SECONDS=3600 quant
 
 ## 已知限制（ponytail: 记录上限，触发再升级）
 
-- **A/B 主题仍需人工分派**：本服务使用 `GITHUB_BASE=pi`，northflank1 使用 `main`，不会再互相覆盖；但两个 base 中的看板仍可能同时选择同一个待研究主题。
+- **A/B 主题分区**：本服务使用 `GITHUB_BASE=pi` 与 `RESEARCH_TOPIC_IDS=9,10`，northflank1 使用 `main` 与 `7,8,11`。脚本会在调用模型前确定选择本分区第一个待研究项；新增看板主题时必须同步更新对应 `RESEARCH_TOPIC_IDS`，否则会被刻意跳过。
 - **模型兼容**：`openai/gpt-oss-20b` 经 openai-completions 中转会产出畸形工具调用（工具名混入 `<|channel|>` 残留，上游 IndexError）。研究轮用默认 `nvidia/nemotron-3-super-120b-a12b`（gpt-oss-20b 有工具调用缺陷）。
 - **restore 语义**：重启只从 `pi` base 恢复 outputs；未合并 `research/*` 分支不参与恢复。若 `pi` 分支不存在，会从默认分支引导。
