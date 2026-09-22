@@ -9,7 +9,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate shell scripts
         run: |
           set -eu
@@ -20,3 +20,5 @@ jobs:
           exit "$failed"
       - name: Validate Python scripts
         run: python3 -m py_compile scripts/*.py
+      - name: Test research state merge
+        run: python3 scripts/test_publish.py

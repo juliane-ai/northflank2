@@ -112,17 +112,121 @@ def topic_of(name):
     return re.sub(r"^20\d{2}-\d{2}-\d{2}-", "", name[:-3])
 
 
+def _board_id(line):
+    """Return the numeric topic ID for a board row, or None."""
+    if not line.startswith("|"):
+        return None
+    cells = [cell.strip() for cell in line.split("|")]
+    if len(cells) < 6 or not cells[1].isdigit():
+        return None
+    return int(cells[1])
+
+
+def _merge_board(base_text, local_text):
+    """Merge externally added board rows without reverting local row updates.
+
+    A long-running volume can hold an older board while an operator adds a new
+    topic to GITHUB_BASE.  Local rows win for the same ID; base-only IDs are
+    appended in base order so deterministic topic assignment cannot regress.
+    """
+    base_lines = base_text.splitlines()
+    base_rows = {}
+    for line in base_lines:
+        topic_id = _board_id(line)
+        if topic_id is not None:
+            base_rows[topic_id] = line
+
+    if not base_rows:
+        return local_text
+
+    result = []
+    seen = set()
+    last_row = -1
+    for line in local_text.splitlines():
+        result.append(line)
+        topic_id = _board_id(line)
+        if topic_id is not None:
+            seen.add(topic_id)
+            last_row = len(result) - 1
+
+    additions = [line for topic_id, line in base_rows.items() if topic_id not in seen]
+    if not additions:
+        return local_text
+
+    if last_row < 0:
+        if result and result[-1].strip():
+            result.append("")
+        result.extend(additions)
+    else:
+        result[last_row + 1:last_row + 1] = additions
+    return "\n".join(result) + "\n"
+
+
+def _merge_experience(base_text, local_text):
+    """Preserve base-only method notes while retaining the runtime append order."""
+    local_lines = local_text.splitlines()
+    local_set = set(local_lines)
+    additions = [
+        line for line in base_text.splitlines()
+        if line.strip() and line not in local_set
+    ]
+    if not additions:
+        return local_text
+    if local_lines and local_lines[-1].strip():
+        local_lines.append("")
+    return "\n".join(local_lines + additions) + "\n"
+
+
+def _merge_shared_output_state(base_path, local_path, state_name=None):
+    base_text = base_path.read_text(encoding="utf-8")
+    local_text = local_path.read_text(encoding="utf-8")
+    if not local_text.strip():
+        if not base_text.strip():
+            return False
+        local_path.write_text(base_text, encoding="utf-8")
+        return True
+    state_name = state_name or local_path.name
+    if state_name == "研究看板.md":
+        merged = _merge_board(base_text, local_text)
+    elif state_name == "研究经验.md":
+        merged = _merge_experience(base_text, local_text)
+    else:
+        return False
+    if merged == local_text:
+        return False
+    local_path.write_text(merged, encoding="utf-8")
+    return True
+
+
 def _copy_outputs(work):
     src = DATA / "outputs"
     if not src.is_dir():
         print(f"[publish] outputs 目录不存在，跳过同步：{src}")
         return False
+    target = Path(work) / "data" / "outputs"
+    shared_base = {}
+    for name in ("研究看板.md", "研究经验.md"):
+        base_path = target / name
+        if base_path.is_file():
+            shared_base[name] = base_path.read_text(encoding="utf-8")
+
     shutil.copytree(
         src,
-        os.path.join(work, "data", "outputs"),
+        target,
         dirs_exist_ok=True,
         ignore=_ignore_nonregular,
     )
+
+    # copytree lets a stale runtime board overwrite the newer base board.  Re-add
+    # base-only rows/notes after copying so an old volume cannot remove an
+    # operator-added topic in the generated research PR.
+    for name, base_text in shared_base.items():
+        local_path = target / name
+        if local_path.is_file():
+            base_backup = target.parent / f".{name}.base"
+            base_backup.write_text(base_text, encoding="utf-8")
+            _merge_shared_output_state(base_backup, local_path, name)
+            base_backup.unlink()
     return True
 
 
@@ -210,6 +314,11 @@ def restore():
             continue
         destination = DATA / "outputs" / relative
         if destination.exists():
+            if destination.name in ("研究看板.md", "研究经验.md"):
+                before = destination.read_text(encoding="utf-8")
+                _merge_shared_output_state(source, destination)
+                if destination.read_text(encoding="utf-8") != before:
+                    count += 1
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
