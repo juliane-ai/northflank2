@@ -10,8 +10,8 @@
 | [research-roadmap.md](research-roadmap.md) | 保本滑动止盈、重复开单、实时趋势分析的后续研究计划。 |
 | [discord-entry-research.md](discord-entry-research.md) | Discord 方向观察、成本保本、滑动止盈与重复入场；含截图解读和首轮模拟规则。 |
 | [signal-research.md](signal-research.md) | 独立 OKX 模拟盘服务、每轮 100 USDT 保证金、本地 Docker 和策略规则。 |
-| [signal-discord.md](signal-discord.md) | MCP 工具、ZeroClaw 只读分析、报告校验与 Discord 接入说明。 |
-| [signal-cloud.md](signal-cloud.md) | Northflank 云端方向看板、Discord 截图入口、环境变量与 WebDAV 审计目录。 |
+| [signal-discord.md](signal-discord.md) | MCP 工具、ZeroClaw 只读分析、报告校验、Discord 接入与可选 AI 定时扫描入口。 |
+| [signal-cloud.md](signal-cloud.md) | Northflank 云端方向看板、Discord 截图入口、可选 AI 定时扫描、环境变量与 WebDAV 审计目录。 |
 | [lifecycle-storage.md](lifecycle-storage.md) | 跟单子仓位发现、快照、结束确认和持久化规则。 |
 | [okx-postgres.md](okx-postgres.md) | OKX PostgreSQL 配置、会话持久化与独立模拟预览。 |
 | [stock-watch.md](stock-watch.md) | 独立 A 股价格提醒服务、数据库与通知配置。 |

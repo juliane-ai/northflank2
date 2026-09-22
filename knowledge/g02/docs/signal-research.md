@@ -45,6 +45,7 @@ SIGNAL_API_TOKEN=至少32位的随机工具访问令牌
 SIGNAL_SERVICE_URL=http://127.0.0.1:8082
 SIGNAL_OKX_MARKET=OPENAPI_GLOBAL
 SIGNAL_POLL_MS=5000
+SIGNAL_AUTO_INSTRUMENTS=BTC-USDT-SWAP,ETH-USDT-SWAP
 SIGNAL_OKX_DEMO_API_KEY=模拟盘专用Key
 SIGNAL_OKX_DEMO_API_SECRET=模拟盘专用Secret
 SIGNAL_OKX_DEMO_API_PASSPHRASE=模拟盘专用Passphrase
@@ -55,7 +56,7 @@ npm run signals:migrate
 npm run signals:start
 ```
 
-打开 `http://127.0.0.1:8082` 登录，登记准确合约（例如 `ETH-USDT-SWAP`）、`long` 或 `short`、原始消息 ID 与方向依据。历史截图不会自动创建当前交易任务。重复原消息返回原任务；同合约同时只允许一个未结束任务。取消会停止观察，并要求已有持仓完成退出；暂停仅停止新开仓，已有持仓继续受到策略保护。
+打开 `http://127.0.0.1:8082` 登录，登记已配置的常规自动开单品种（默认 `BTC-USDT-SWAP` 或 `ETH-USDT-SWAP`）、`long` 或 `short`、原始消息 ID 与方向依据。历史截图不会自动创建当前交易任务。重复原消息返回原任务；同合约同时只允许一个未结束任务。取消会停止观察，并要求已有持仓完成退出；暂停仅停止新开仓，已有持仓继续受到策略保护。行情分析可以读取其他准确合约，但不会绕过自动开单品种策略。
 
 每个任务最多有效 24 小时；到期不再开新仓，已有仓位继续执行保护和最长 48 小时持仓规则。服务使用真实匿名公共行情。`paper` 不是看板的 `OKX_MOCK`：它保存策略轮次、报价成交与估算费用，仅用于自动化测试；部署服务应使用 `okx-demo` 和专用模拟盘 Key。
 
@@ -104,7 +105,7 @@ SIGNAL_OKX_DEMO_API_PASSPHRASE=模拟盘专用Passphrase
 
 ## Discord 与 ZeroClaw
 
-工具桥通过标准输入输出 MCP 调用此服务，只需要 `SIGNAL_SERVICE_URL`、`SIGNAL_API_TOKEN`，不需要数据库或交易所密钥。具体工具及 ZeroClaw 配置见 [signal-discord.md](signal-discord.md)。
+工具桥通过标准输入输出 MCP 调用此服务，只需要 `SIGNAL_SERVICE_URL`、`SIGNAL_API_TOKEN`，不需要数据库或交易所密钥。具体工具及 ZeroClaw 配置见 [signal-discord.md](signal-discord.md)；默认关闭的 AI 定时扫描入口也复用该只读边界，见 [AI 定时扫描入口](signal-discord.md#ai-定时扫描入口可选默认关闭)。
 
 本地可运行 `npm run signals:analyze -- ETH-USDT-SWAP`，让 ZeroClaw 读取实时行情和同合约任务，生成带工具证据的分析报告。首次使用需按 [本地分析步骤](signal-discord.md#本地-zeroclaw-分析) 构建运行镜像并配置模型。分析工具返回与执行共用的 `strategyRules`，不创建任务、不推进保存的状态。看板的“分析当前行情”和“分析当前任务”也使用同一组计算。
 

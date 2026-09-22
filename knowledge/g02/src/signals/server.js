@@ -12,6 +12,7 @@ import { SignalMarket, signalMarketRegion } from './market.js';
 import { DemoExecutor } from './executor.js';
 import { analyzeFrame } from './analysis.js';
 import { runtimeSummary } from './runtime.js';
+import { DEFAULT_AUTO_INSTRUMENTS, autoInstrumentMessage, normalizeAutoInstruments } from './policy.js';
 import { sendStaticAsset } from '../static-assets.js';
 
 const files = new Map([
@@ -37,7 +38,8 @@ async function body(req) {
 }
 export async function createSignalService({ pool, mode = 'paper', username, password, apiToken = '', secureCookie = false,
   trustProxy = false, market, executor, intervalMs = 5000, startMonitor = true, accountBinding = '',
-  basePath = '', browserAuth = null, onFailure = null, runtimeStatus = null }) {
+  basePath = '', browserAuth = null, onFailure = null, runtimeStatus = null,
+  allowedInstruments = DEFAULT_AUTO_INSTRUMENTS }) {
   if (basePath && !/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(basePath)) throw badRequest('方向策略路径配置不正确');
   if (browserAuth && (typeof browserAuth.session !== 'function' || !/^\/(?!\/)/.test(browserAuth.loginPath || ''))) throw badRequest('共享登录配置不正确');
   if (!browserAuth && (!username || !password || password.length < 16)) throw badRequest('请配置 SIGNAL_VIEWER_USERNAME 和至少 16 位的 SIGNAL_VIEWER_PASSWORD');
@@ -48,6 +50,9 @@ export async function createSignalService({ pool, mode = 'paper', username, pass
   }
   if (!market || typeof market.frame !== 'function') throw badRequest('方向策略行情源配置不正确');
   if (!Number.isInteger(intervalMs) || intervalMs < 1000 || intervalMs > 30_000) throw badRequest('SIGNAL_POLL_MS 必须在 1000～30000 之间');
+  let autoInstruments;
+  try { autoInstruments = normalizeAutoInstruments(allowedInstruments); }
+  catch { throw badRequest('SIGNAL_AUTO_INSTRUMENTS 配置不正确'); }
   let accountId = '';
   if (mode === 'okx-demo') {
     if (!(executor instanceof DemoExecutor)) throw badRequest('OKX 模拟盘必须使用内置 DemoExecutor');
@@ -128,9 +133,10 @@ export async function createSignalService({ pool, mode = 'paper', username, pass
             Promise.resolve().then(runtimeStatus).catch(() => null),
             new Promise(resolve => { statusTimeout = setTimeout(() => resolve(null), 1000); }),
           ]).finally(() => clearTimeout(statusTimeout)) : null;
-          const [tasks, events, runtime] = await Promise.all([store.list(), store.events(), status]);
+          const tasks = await store.list();
+          const [events, runtime, research] = await Promise.all([store.events(), status, store.researchStatus(tasks).catch(() => null)]);
           const realizedPnl = tasks.reduce((sum, t) => sum + (t.rounds || []).reduce((s, r) => s + Number(r.netPnl || 0), 0), 0);
-          json(200, { mode, tasks, events, limits: LIMITS, monitor: monitor.status(), summary: { initialEquity: LIMITS.initialEquity, realizedPnl, equity: LIMITS.initialEquity + realizedPnl }, runtime, serverTime: new Date().toISOString() }); return;
+          json(200, { mode, tasks, events, limits: LIMITS, instrumentPolicy: { auto: autoInstruments }, monitor: monitor.status(), summary: { initialEquity: LIMITS.initialEquity, realizedPnl, equity: LIMITS.initialEquity + realizedPnl }, research, runtime, serverTime: new Date().toISOString() }); return;
         }
         if (req.method === 'POST' && path === '/api/refresh') { await monitor.refresh(); json(200, { ok: !monitor.error, monitor: monitor.status() }); return; }
         if (req.method === 'GET' && path === '/api/analysis') {
@@ -141,6 +147,7 @@ export async function createSignalService({ pool, mode = 'paper', username, pass
         if (req.method === 'POST' && path === '/api/tasks') {
           const input = await body(req);
           if (Object.keys(input).some(k => !['sourceId', 'sourceText', 'source', 'instId', 'direction', 'expiresAt', 'config'].includes(k))) throw badRequest('包含不支持的方向任务字段');
+          if (!autoInstruments.includes(input.instId)) throw badRequest(autoInstrumentMessage(autoInstruments));
           const result = await monitor.exclusive(() => store.create(input)); json(result.duplicate ? 200 : 201, result); return;
         }
         const analysisMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/analysis$/i.exec(path);
@@ -180,6 +187,9 @@ export async function openSignalRuntime(env = process.env, options = {}) {
   const databaseUrl = env.SIGNAL_DATABASE_URL || env.EXTERNAL_JDBC_POSTGRES_URI_ADMIN;
   if (!databaseUrl) throw badRequest('请配置 SIGNAL_DATABASE_URL 或 EXTERNAL_JDBC_POSTGRES_URI_ADMIN');
   const marketRegion = signalMarketRegion(env.SIGNAL_OKX_MARKET);
+  let allowedInstruments;
+  try { allowedInstruments = normalizeAutoInstruments(env.SIGNAL_AUTO_INSTRUMENTS ?? DEFAULT_AUTO_INSTRUMENTS); }
+  catch { throw badRequest('SIGNAL_AUTO_INSTRUMENTS 配置不正确'); }
   // The process entrypoint is intentionally demo-only. PaperExecutor remains available
   // through the test-oriented factory, never through the deployed server command.
   const executor = DemoExecutor.fromEnv({
@@ -198,7 +208,7 @@ export async function openSignalRuntime(env = process.env, options = {}) {
       accountBinding: mode === 'okx-demo' ? createHash('sha256').update(`${marketRegion}:${env.SIGNAL_OKX_DEMO_API_KEY}`).digest('hex') : '',
       intervalMs: Number(env.SIGNAL_POLL_MS || 5000), secureCookie: env.NODE_ENV === 'production' || env.SIGNAL_SECURE_COOKIE === '1', trustProxy: env.SIGNAL_TRUST_PROXY === '1',
       basePath: options.basePath, browserAuth: options.browserAuth, onFailure: options.onFailure,
-      runtimeStatus: options.runtimeStatus || (() => runtimeSummary(env)) });
+      runtimeStatus: options.runtimeStatus || (() => runtimeSummary(env)), allowedInstruments });
     let closing;
     const close = () => closing ||= (async () => { try { await service.close(); } finally { await pool.end(); } })();
     return { ...service, close };

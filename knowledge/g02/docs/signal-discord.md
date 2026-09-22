@@ -1,6 +1,6 @@
 # Discord / ZeroClaw 模拟方向工具
 
-方向策略服务的运行配置见 [signal-research.md](signal-research.md)。标准输入输出 MCP 桥与本地 ZeroClaw 只读分析已经联调通过。Discord 群聊截图入口复用现有 bot 读取限定频道，由双模型识别、ZeroClaw 研究和固定预算校验后登记。主镜像现支持直接在云端运行，配置步骤见 [signal-cloud.md](signal-cloud.md)；代码支持不等于云端已完成环境配置和上线验收。
+方向策略服务的运行配置见 [signal-research.md](signal-research.md)。标准输入输出 MCP 桥与本地 ZeroClaw 只读分析已经联调通过。Discord 群聊截图入口复用现有 bot 读取限定频道，由双模型识别、ZeroClaw 研究和固定预算校验后登记；另有默认关闭的 AI 定时扫描入口，见下方独立小节。主镜像现支持直接在云端运行，配置步骤见 [signal-cloud.md](signal-cloud.md)；代码支持不等于云端已完成环境配置和上线验收。
 
 ## 本地 ZeroClaw 分析
 
@@ -66,6 +66,14 @@ npm run signals:observe -- direction.json
 2026-09-16 的真实预览暴露过模型在 JSON 前加代码围栏、合约字符串检索召回无关兑换器，以及把开发样例误判为允许观察的问题。解析器只规范化代码围栏后再严格核对字段；检索使用币种和日期；执行权限由必填 `intent` 独立约束。预览始终禁止登记，相关失败与模型原始结论保留在日志里。
 
 网络检索通过 `SIGNAL_SEARCH_URL` 指定 SearXNG 的 origin，自动访问 `/search?format=json`。本地 runner 默认使用项目现有 SearXNG 公网地址；可在 `.env` 指定自己的地址。MCP 独立运行时不提供默认，缺少配置会返回明确错误，其他工具仍可用。该配置只进入分析容器，搜索请求不带策略服务令牌、数据库或交易所凭据。
+
+### AI 定时扫描入口（可选，默认关闭）
+
+真实方向不足时，可用 `SIGNAL_AI_AUTOCREATE=true` 开启机器定时扫描，但它不能替代用户方向样本。worker 默认每 15 分钟运行一次（`SIGNAL_AI_AUTOCREATE_INTERVAL_MS`，允许 1–60 分钟，非法值回落 900000），逐个扫描 `SIGNAL_AUTO_INSTRUMENTS`（默认 BTC、ETH）。每次扫描复用 observation 配置，ZeroClaw 只拿到行情、任务、检索等只读工具，输出 `observe`／`wait`／`reject`；提交程序核对 120 秒内真实行情、最新任务列表、成功公开检索、引用确实出现在检索结果中、同合约无活动任务，且模型没有改写合约、方向或预算。
+
+每个合约每天只有一个固定来源 ID `ai:auto:<合约>:<UTC日期>`，网络超时后的下一轮不会重复登记；`observe` 也只是登记观察任务，下单仍由固定状态机等待趋势、回撤、收盘确认和新报价。AI 扫描样本必须与用户方向分开统计，不得混入“外部方向是否有价值”的验证集。
+
+本地与容器命令：`npm run signals:autopilot -- check|start|status|stop`；云端主镜像由 entrypoint 在调度器健康后自动启动。扫描报告写入既有 `data/signal-observation/`，运行状态 `data/signal-autopilot/status.json` 与 PID 文件不参与备份，单实例锁防止重复 worker。
 
 ### Discord 服务连接
 

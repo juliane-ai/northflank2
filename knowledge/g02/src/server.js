@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { sameToken } from './auth.js';
-import { AsyncTtlCache } from './cache.js';
+import { AsyncSnapshotCache, AsyncTtlCache } from './cache.js';
 import { geoAccess, parseAllowedCountries } from './geo-access.js';
 import { openOkxStorage } from './okx-storage.js';
 import { MockOkxReadClient, OkxReadClient } from './okx-reader.js';
@@ -58,7 +58,7 @@ const storage = await openOkxStorage({
   process.exit(1);
 });
 const { auth, lifecycleStore } = storage;
-const overviewCache = new AsyncTtlCache(Number(process.env.OKX_CACHE_MS ?? 8_000));
+const overviewCache = new AsyncSnapshotCache(Number(process.env.OKX_CACHE_MS ?? 8_000), 60_000);
 const settingsCaches = new Map();
 const auditThrottle = new Map();
 // 平台健康检查轮询频繁；入口状态最多每 5 秒读一次容器状态文件。
@@ -379,16 +379,28 @@ async function handleRequest(request, response) {
 
   if (url.pathname === '/api/overview') {
     try {
-      const data = await overviewCache.get(() => buildOverview(reader));
-      try {
-        await lifecycleStore.observe(data.copyPositions, {
-          observedAt: Date.parse(data.updatedAt),
-          sourceOk: data.sources.copyPositions.ok,
-        });
-      } catch {
-        console.error(JSON.stringify({ event: 'research.persistence_failed', at: new Date().toISOString() }));
+      const forceFresh = url.searchParams.get('fresh') === '1';
+      if ([...url.searchParams.keys()].some((key) => key !== 'fresh') || url.searchParams.getAll('fresh').length > 1
+        || (url.searchParams.has('fresh') && !forceFresh)) {
+        sendJson(response, 400, { error: '不支持的刷新参数' });
+        return;
       }
-      sendJson(response, 200, data);
+      const snapshot = await overviewCache.get(async () => {
+        const data = await buildOverview(reader);
+        try {
+          await lifecycleStore.observe(data.copyPositions, {
+            observedAt: Date.parse(data.updatedAt),
+            sourceOk: data.sources.copyPositions.ok,
+          });
+        } catch {
+          console.error(JSON.stringify({ event: 'research.persistence_failed', at: new Date().toISOString() }));
+        }
+        return data;
+      }, { fresh: forceFresh });
+      sendJson(response, 200, {
+        ...snapshot.value,
+        delivery: { status: snapshot.status, ageMs: snapshot.ageMs },
+      });
     } catch {
       sendJson(response, 502, { error: '暂时无法读取 OKX 数据，请稍后重试' });
     }

@@ -57,6 +57,21 @@ export class SignalStore {
     });
   }
   async list() { return (await this.pool.query('SELECT state FROM signal_research.tasks ORDER BY created_at DESC,id')).rows.map(r => hydrateTask(r.state)); }
+  async researchStatus(tasks = []) {
+    const row = (await this.pool.query(`SELECT
+      (SELECT count(*)::int FROM signal_research.events) AS event_count,
+      (SELECT count(*)::int FROM signal_research.quotes) AS quote_count,
+      (SELECT count(*)::int FROM signal_research.candles) AS candle_count,
+      (SELECT count(DISTINCT inst_id)::int FROM signal_research.quotes) AS instrument_count`)).rows[0] || {};
+    return {
+      taskCount: tasks.length,
+      activeTaskCount: tasks.filter(isActive).length,
+      eventCount: Number(row.event_count || 0),
+      quoteCount: Number(row.quote_count || 0),
+      candleCount: Number(row.candle_count || 0),
+      instrumentCount: Number(row.instrument_count || 0),
+    };
+  }
   async get(id) {
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('任务 ID 不正确');
     const row = (await this.pool.query('SELECT state FROM signal_research.tasks WHERE id=$1', [id])).rows[0];

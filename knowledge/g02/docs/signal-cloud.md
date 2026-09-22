@@ -2,7 +2,7 @@
 
 主 `Dockerfile` 支持在现有 OKX 看板容器中启动方向策略服务和 Discord 截图入口。云端分析直接调用镜像内的 ZeroClaw，使用独立配置和只读工具；不依赖本机 Docker、Docker socket 或 `.env.signals.local`。以下是部署配置，Git 推送成功并不代表 Northflank 已完成构建、环境配置和上线验收。
 
-方向服务只连接 **OKX 模拟盘**。Discord 自动入口固定每轮保证金上限 100 USDT、3 倍逐仓、名义金额上限 300 USDT、单轮风险上限 25 USDT、任务风险上限 75 USDT、最多 3 轮。登记只是开始观察；满足策略条件后才提交模拟订单。
+方向服务只连接 **OKX 模拟盘**。Discord 自动入口默认只接受 `BTC-USDT-SWAP` 与 `ETH-USDT-SWAP`；可用 `SIGNAL_AUTO_INSTRUMENTS` 显式扩展，服务端会拒绝未配置的自动开单品种。另有默认关闭的 AI 定时扫描入口，开启后同样受该品种白名单约束，见第三阶段。每轮保证金上限 100 USDT、3 倍逐仓、名义金额上限 300 USDT、单轮风险上限 25 USDT、任务风险上限 75 USDT、最多 3 轮。登记只是开始观察；满足策略条件后才提交模拟订单。
 
 本地 `.env.cloud` 保存已有模型、Discord、模拟盘、WebDAV 配置和 API 令牌。统一入口使用原有 `OKX_VIEWER_USERNAME` / `OKX_VIEWER_PASSWORD` 登录；模拟策略可复用已有 `EXTERNAL_JDBC_POSTGRES_URI_ADMIN`，也可显式填写 `SIGNAL_DATABASE_URL`。该文件包含密钥，权限为 0600，已被 Git 和 Docker 构建忽略，只用于把新增／更新变量导入平台，不能替换或删除现有主服务变量。平台逐项填写时，dotenv 值外层的引号不属于实际值。
 
@@ -71,6 +71,20 @@ SIGNAL_DISCORD_ENABLED=true
 
 目前识图中转曾出现间歇性 HTTP 403；模型不足两个有效结果、合约不清或方向分歧时会澄清，不创建任务。停止与重启会跳过离线积压；进行中的不确定登记保留来源 ID，不能通过重复发送同一材料来推测结果，应先核对看板。
 
+## 第三阶段（可选）：启用 AI 定时扫描入口
+
+在 Discord 截图入口之外，可让模型定时扫描自动开单品种。该入口默认关闭，样本来源固定为 `ai:auto:`，不能替代用户方向。在平台追加：
+
+```dotenv
+SIGNAL_AI_AUTOCREATE=true
+SIGNAL_AI_AUTOCREATE_INTERVAL_MS=900000
+SIGNAL_AUTO_INSTRUMENTS=BTC-USDT-SWAP,ETH-USDT-SWAP
+```
+
+前提仍是 `SIGNAL_ENABLED=true` 和 ZeroClaw 模型三项；entrypoint 先等待 `/simulation` 调度器健康（最多 30 秒），再启动单实例 worker 并按间隔循环。模型只有只读工具；程序校验新鲜行情、任务列表、检索引用、每日固定来源 ID 和同合约无活动任务后，最多把 `observe` 登记为观察任务，订单仍由固定模拟策略确认。启动日志应出现 `AI automatic direction intake enabled; orders remain behind the fixed demo strategy.`；排查命令为容器内 `npm run signals:autopilot -- status`。
+
+WebDAV 无需新增映射：扫描报告保存在既有 `signal-observation` 映射；`signal-autopilot/status.json`、PID 和 `worker.log` 属于运行状态或日志，已被排除规则过滤，不作为恢复依据。
+
 ## WebDAV 持久化与本地查看
 
 在同一服务配置以下变量；InfiniCLOUD 的前三项使用 My Page → Apps Connection 中的 Connection URL、Connection ID 和 Apps Password。
@@ -114,7 +128,7 @@ npm run persistence:mirror
 
 ## 启动日志排查
 
-仅出现 8080 主看板、8081 A 股和 ZeroClaw `Channels: discord.main`，不代表方向策略或截图入口已启用。确认运行环境中的 `SIGNAL_ENABLED=true` 与 `SIGNAL_DISCORD_ENABLED=true` 都生效（值为小写 `true`，没有引号或额外空格），数据库使用 `SIGNAL_DATABASE_URL` 或已有 `EXTERNAL_JDBC_POSTGRES_URI_ADMIN`。入口脚本会输出 `Signal research enabled in the shared dashboard on port 8080/simulation (OKX demo only)`，随后必须确认 `/simulation/healthz` 正常及 `Discord screenshot intake ready in #info`；启动配置提示本身不代表调度已经健康。关闭的可选服务也会输出明确提示。
+仅出现 8080 主看板、8081 A 股和 ZeroClaw `Channels: discord.main`，不代表方向策略或截图入口已启用。确认运行环境中的 `SIGNAL_ENABLED=true` 与 `SIGNAL_DISCORD_ENABLED=true` 都生效（值为小写 `true`，没有引号或额外空格），数据库使用 `SIGNAL_DATABASE_URL` 或已有 `EXTERNAL_JDBC_POSTGRES_URI_ADMIN`。入口脚本会输出 `Signal research enabled in the shared dashboard on port 8080/simulation (OKX demo only)`，随后必须确认 `/simulation/healthz` 正常及 `Discord screenshot intake ready in #info`；启动配置提示本身不代表调度已经健康。关闭的可选服务也会输出明确提示。启用 AI 定时扫描时，还需看到 `AI automatic direction intake enabled`；若只出现 `AI automatic direction intake disabled; set SIGNAL_AI_AUTOCREATE=true to enable`，说明平台变量尚未生效。
 
 `persistence.restored` 表示启动前已经成功恢复快照；首次定时备份默认在应用启动约 300 秒后，随后检查 `persistence.saved` 或 `persistence.unchanged`。若 WebDAV 清单只有 `zeroclaw` 映射，补齐上面的四目录映射才能备份截图处理记录和分析报告。2026-09-17 已从真实远端校验下载到本地 `data/cloud-mirror/`，当时最新快照含 9 个文件，包括 SQLite 记忆库；查看副本不会修改云端。
 
