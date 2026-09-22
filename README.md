@@ -46,7 +46,7 @@ Agent 研究时可调用已部署的 SearXNG JSON API（`SEARCH_API_URL`，默�
 
 1. 创建 **Background Worker** Service（无 HTTP 端口），从 Git 仓库 `juliane-ai/northflank2` 构建。
 2. 环境变量见 `.env.example`。与 northflank1 相比，`GITHUB_BASE` 必须保持 `pi`，
-   `BACKUP_OBJECT_KEY` 默认 `northflank2/data.tar.gz.enc`，`RESEARCH_TOPIC_IDS` 默认 `9,10`；两个隔离 base 避免互相覆盖，静态主题分区避免重复开题。
+   `BACKUP_OBJECT_KEY` 默认 `northflank2/data.tar.gz.enc`，`RESEARCH_TOPIC_IDS` 默认 `9,10`；两个隔离 base 避免互相覆盖，脚本会在运行前确定选择第一个分配待研究项，避免重复开题。
 3. 看研究进展：R2 备份拉回 `outputs/`，或进容器看 `/opt/data/outputs/`。
 
 ## 本地构建与冒烟

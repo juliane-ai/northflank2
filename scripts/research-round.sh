@@ -18,6 +18,17 @@ fi
 ts=$(date +%Y%m%d-%H%M%S)
 log="$LOG_DIR/round-$ts.log"
 query_file="$PROMPT_FILE"
+if ! selected_topic=$(python3 /opt/scripts/select-topic.py 2>>"$log"); then
+    echo "[research-round] assigned topic selection failed" >> "$log"
+    exit 0
+fi
+case "$selected_topic" in
+    NO_ASSIGNED_TOPIC)
+        echo "[research-round] no assigned waiting topic; idle round" >> "$log"
+        exit 0
+        ;;
+esac
+
 if [ -n "${RESEARCH_TOPIC_IDS:-}" ]; then
     case "$RESEARCH_TOPIC_IDS" in
         *[!0-9,]*|,*|*,,*|,*) echo "[research-round] invalid RESEARCH_TOPIC_IDS=$RESEARCH_TOPIC_IDS" >> "$log"; exit 0 ;;
@@ -26,9 +37,13 @@ if [ -n "${RESEARCH_TOPIC_IDS:-}" ]; then
     cat "$PROMPT_FILE" > "$query_file"
     cat >> "$query_file" <<EOF
 
+## 本轮指定主题（确定性选题，必须唯一）
+
+$selected_topic
+
 ## 主题分区硬约束
 
-本 agent 只允许研究看板编号属于 { $RESEARCH_TOPIC_IDS } 的「待研究」项；更高优先级但不属于该集合的主题也必须跳过。若集合内没有可研究主题，不要新建研报，不要改看板状态，只输出「本轮无分配主题」。
+本 agent 只允许研究上面这一条看板项；更高优先级但不属于本 agent 分区的主题也必须跳过。不要新建、改写或研究其他主题。
 EOF
     chmod 600 "$query_file"
 fi
