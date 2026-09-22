@@ -38,12 +38,12 @@ fi
 
 run_backup() {
   reason="$1"
-  log "starting backup-all ($reason)"
-  if backup-all; then
-    log "backup-all completed ($reason)"
+  log "starting backup-data ($reason)"
+  if /opt/scripts/backup-data.sh; then
+    log "backup-data completed ($reason)"
   else
     code=$?
-    log "backup-all failed with exit code $code ($reason); scheduler will continue"
+    log "backup-data failed with exit code $code ($reason); scheduler will continue"
   fi
 }
 
@@ -52,7 +52,7 @@ if [ "$SCHEDULED_BACKUP_ENABLED" != "true" ]; then
   exit 0
 fi
 
-log "enabled; daily backup time=$SCHEDULED_BACKUP_TIME, interval=${SCHEDULED_BACKUP_INTERVAL_SECONDS}s"
+log "enabled; daily backup-data time=$SCHEDULED_BACKUP_TIME, interval=${SCHEDULED_BACKUP_INTERVAL_SECONDS}s"
 [ -n "${TZ:-}" ] && log "timezone TZ=$TZ"
 
 last_run_date=""

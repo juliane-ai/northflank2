@@ -79,7 +79,7 @@ while :; do
         python3 /opt/scripts/publish.py >> "$DATA_DIR/logs/publish.log" 2>&1 || { tail -15 "$DATA_DIR/logs/publish.log" >&2; log "publish failed（详情见上方 stderr）"; }
     fi
     if [ -n "${BACKUP_PASSWORD:-}" ]; then
-        backup-data || log "post-round backup failed"
+        /opt/scripts/backup-data.sh || log "post-round backup failed"
     fi
     sleep_until "$RESEARCH_INTERVAL_SECONDS"
 done

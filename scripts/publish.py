@@ -1,183 +1,227 @@
 #!/usr/bin/env python3
-"""研究资料与会话记忆 → 私有 GitHub 仓库（issue + PR 流程）。主持久化通道。
+"""研究产出 → 私有 GitHub 仓库（issue + PR 流程）。
 
-publish（默认）：/opt/data 全量同步到仓库 data/（排除 .env 等密钥），新研报各开
-  issue（按标题去重），research/<ts> 分支提交 + 开 PR（Closes #N）。
-restore：启动时用 —— 本地 /opt/data 缺看板且仓库有 data/ 时，把仓库数据补回本地
-  （只补缺失文件，不覆盖本地已有）。
+publish：只同步 DATA_DIR/outputs 中的人类可读研究产物（不同步 logs、数据库、
+  会话缓存或运行时二进制），为每篇新研报开 issue，并创建 research/<timestamp> PR。
+restore：只从配置的 GITHUB_BASE 分支恢复 outputs；不再读取未合并 research/* 分支。
 环境变量：GITHUB_REPO=owner/name，GITHUB_PAT=token，GITHUB_BASE=main，DATA_DIR=/opt/data
 """
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import time
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 REPO = os.environ["GITHUB_REPO"]
 PAT = os.environ["GITHUB_PAT"]
 BASE = os.environ.get("GITHUB_BASE", "main")
-DATA = os.environ.get("DATA_DIR", "/opt/data")
+DATA = Path(os.environ.get("DATA_DIR", "/opt/data"))
 API = f"https://api.github.com/repos/{REPO}"
 TZ = timezone(timedelta(hours=8))
 REPORT_RE = re.compile(r"^20\d{2}-\d{2}-\d{2}-.+\.md$")
-# 密钥绝不上仓库：.env 与 config.yaml*（含 api_key，及 hermes 的 config.yaml.good.* 备份）都不同步；
-# backups/bin/cache 是 hermes 运行时产物（含 33MB tirith 二进制），同步上去是纯膨胀
-IGNORE = shutil.ignore_patterns(".env", "*.key", "*.pem", "config.yaml*", "backups/", "bin/", "cache/", "*.sock", "__pycache__/", "*.pyc")
+IGNORE = shutil.ignore_patterns(
+    ".env", ".env.*", "*.key", "*.pem", "config.yaml*", "logs",
+    "backups", "bin", "cache", "lazy-packages", "__pycache__", "*.pyc", "*.sock",
+)
 
 
 def _ignore_nonregular(dir, names):
-    """跳过 socket/fifo 等非普通文件：gateway 运行时会在 DATA_DIR 放 unix socket，
-    copytree 拷它们直接 Errno 6 崩掉（Northflank 完整启动后 publish 失败的元凶）。"""
+    """跳过 socket/fifo 等非普通文件。"""
     skip = list(IGNORE(dir, names))
-    for n in names:
-        p = os.path.join(dir, n)
-        if n in skip:
+    for name in names:
+        path = os.path.join(dir, name)
+        if name in skip:
             continue
-        if os.path.exists(p) and not os.path.isfile(p) and not os.path.isdir(p):
-            skip.append(n)
+        if os.path.exists(path) and not os.path.isfile(path) and not os.path.isdir(path):
+            skip.append(name)
     return skip
 
 
 def api(method, path, body=None):
     req = urllib.request.Request(
-        API + path, method=method,
+        API + path,
+        method=method,
         headers={"Authorization": f"Bearer {PAT}", "Accept": "application/vnd.github+json"},
-        data=json.dumps(body).encode() if body is not None else None)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r) if r.status != 204 else {}
+        data=json.dumps(body).encode() if body is not None else None,
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.load(response) if response.status != 204 else {}
+
+
+def _redact_completed(result):
+    """避免 Git 错误信息把带 token 的 remote URL 打进容器日志。"""
+    result.stdout = result.stdout.replace(PAT, "***")
+    result.stderr = result.stderr.replace(PAT, "***")
+    return result
 
 
 def git(*args, cwd, check=True):
-    return subprocess.run(("git", *args), cwd=cwd, check=check,
-                          capture_output=True, text=True)
+    result = subprocess.run(
+        ("git", *args), cwd=cwd, check=False, capture_output=True, text=True
+    )
+    result = _redact_completed(result)
+    if check and result.returncode:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, stdout=result.stdout, stderr=result.stderr
+        )
+    return result
 
 
 def git_push_retry(branch, cwd, attempts=3):
-    """push 对瞬断（代理 TLS 掐断、网络抖动）重试；大 postBuffer 缓解 rpc rewind 报错。"""
+    """push 对瞬断重试；只输出脱敏后的 Git 错误。"""
     git("config", "http.postBuffer", "524288000", cwd=cwd)
     last = None
-    for i in range(attempts):
-        r = git("push", "-u", "origin", branch, cwd=cwd, check=False)
-        if r.returncode == 0:
-            return r
-        last = r
-        if i < attempts - 1:
-            time.sleep(5 * (i + 1))
-    raise subprocess.CalledProcessError(last.returncode, last.args,
-                                        stdout=last.stdout, stderr=last.stderr)
+    for attempt in range(attempts):
+        result = git("push", "-u", "origin", branch, cwd=cwd, check=False)
+        if result.returncode == 0:
+            return result
+        last = result
+        if attempt < attempts - 1:
+            time.sleep(5 * (attempt + 1))
+    raise subprocess.CalledProcessError(
+        last.returncode, last.args, stdout=last.stdout, stderr=last.stderr
+    )
+
+
+def _repo_url():
+    return f"https://x-access-token:{PAT}@github.com/{REPO}.git"
 
 
 def clone_to(work):
-    url = f"https://x-access-token:{PAT}@github.com/{REPO}.git"
-    git("clone", "--depth", "1", url, work, cwd="/tmp")
+    """Clone GITHUB_BASE; bootstrap a new base branch from the default branch."""
+    url = _repo_url()
+    branch_exists = git(
+        "ls-remote", "--heads", url, BASE, cwd="/tmp", check=False
+    ).stdout.strip()
+    if branch_exists:
+        git("clone", "--depth", "1", "--branch", BASE, url, work, cwd="/tmp")
+    else:
+        git("clone", "--depth", "1", url, work, cwd="/tmp")
+        git("checkout", "-B", BASE, cwd=work)
     git("config", "user.name", "quant-research-bot", cwd=work)
     git("config", "user.email", "quant-research-bot@users.noreply.github.com", cwd=work)
 
 
 def topic_of(name):
-    """YYYY-MM-DD-主题.md → 主题"""
     return re.sub(r"^20\d{2}-\d{2}-\d{2}-", "", name[:-3])
 
 
-def publish():
-    ts = datetime.now(TZ)
-    stamp = ts.strftime("%Y%m%d-%H%M%S")
-    work = f"/tmp/publish-{stamp}"
-    clone_to(work)
-    empty = git("rev-parse", "--verify", "HEAD", cwd=work, check=False).returncode != 0
+def _copy_outputs(work):
+    src = DATA / "outputs"
+    if not src.is_dir():
+        print(f"[publish] outputs 目录不存在，跳过同步：{src}")
+        return False
+    shutil.copytree(
+        src,
+        os.path.join(work, "data", "outputs"),
+        dirs_exist_ok=True,
+        ignore=_ignore_nonregular,
+    )
+    return True
 
-    shutil.copytree(DATA, os.path.join(work, "data"), dirs_exist_ok=True, ignore=_ignore_nonregular)
+
+def _known_issue_titles():
+    titles = set()
+    page = 1
+    while True:
+        items = api("GET", f"/issues?state=all&per_page=100&page={page}")
+        if not items:
+            break
+        titles.update(item["title"] for item in items if "pull_request" not in item)
+        if len(items) < 100:
+            break
+        page += 1
+    return titles
+
+
+def publish():
+    now = datetime.now(TZ)
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    suffix = secrets.token_hex(3)
+    work = f"/tmp/publish-{stamp}-{suffix}"
+    clone_to(work)
+    if not _copy_outputs(work):
+        return
     if not git("status", "--porcelain", cwd=work).stdout.strip():
         print("[publish] 无新产出，跳过")
         return
 
-    out_reports = os.path.join(DATA, "outputs")
     new_reports = []
-    if os.path.isdir(out_reports):
-        for f in sorted(os.listdir(out_reports)):
-            if REPORT_RE.match(f) and git(
-                    "status", "--porcelain", "--", f"data/outputs/{f}", cwd=work).stdout.strip():
-                new_reports.append(f)
+    for filename in sorted(os.listdir(DATA / "outputs")):
+        path = DATA / "outputs" / filename
+        if not filename.endswith(".md") or not path.is_file() or not REPORT_RE.match(filename):
+            continue
+        rel = f"data/outputs/{filename}"
+        if git("status", "--porcelain", "--", rel, cwd=work).stdout.strip():
+            new_reports.append(filename)
 
-    # 新研报 → issue（按主题标题去重，含已关闭的）
-    known = {i["title"] for i in api("GET", "/issues?state=all&per_page=100")}
+    known = _known_issue_titles()
     issue_nums = {}
-    for f in new_reports:
-        title = topic_of(f)
+    for filename in new_reports:
+        title = topic_of(filename)
         if title in known:
             continue
-        num = api("POST", "/issues", {
+        issue = api("POST", "/issues", {
             "title": title,
-            "body": f"研报已产出：`data/outputs/{f}`（{ts:%Y-%m-%d %H:%M}）\n待 PR 审核合并后归档。",
-        })["number"]
-        issue_nums[title] = num
-        print(f"[publish] issue #{num}: {title}")
+            "body": f"研报已产出：`data/outputs/{filename}`（{now:%Y-%m-%d %H:%M}）\n待 PR 审核合并后归档。",
+        })
+        issue_nums[title] = issue["number"]
+        print(f"[publish] issue #{issue['number']}: {title}")
 
     git("add", "-A", cwd=work)
-    msg = f"research: {ts:%Y-%m-%d %H:%M} " + ", ".join(topic_of(f) for f in new_reports[:3])
-    if empty:
-        git("checkout", "-B", BASE, cwd=work)
-        git("commit", "-m", msg, cwd=work)
-        git_push_retry(BASE, cwd=work)
-        print(f"[publish] 空仓库已引导 {BASE} 分支（首轮不开发 PR）")
-        return
-
-    branch = f"research/{stamp}"
+    title_part = ", ".join(topic_of(filename) for filename in new_reports[:3])
+    message = f"research: {now:%Y-%m-%d %H:%M} " + title_part
+    branch = f"research/{stamp}-{suffix}"
     git("checkout", "-B", branch, cwd=work)
-    git("commit", "-m", msg, cwd=work)
+    git("commit", "-m", message, cwd=work)
     git_push_retry(branch, cwd=work)
 
-    closes = "\n".join(f"Closes #{n}" for n in issue_nums.values())
-    pr = api("POST", "/pulls", {
-        "title": f"研究归档 {ts:%Y-%m-%d %H:%M}",
-        "head": branch, "base": BASE,
-        "body": f"本轮研究产出自动归档：{len(new_reports)} 篇新研报；含会话记忆同步。\n\n{closes}".strip(),
+    closes = "\n".join(f"Closes #{number}" for number in issue_nums.values())
+    pull = api("POST", "/pulls", {
+        "title": f"研究归档 {now:%Y-%m-%d %H:%M}",
+        "head": branch,
+        "base": BASE,
+        "body": f"本轮研究产出自动归档：{len(new_reports)} 篇新研报；仅同步 outputs，不同步运行时状态。\n\n{closes}".strip(),
     })
-    print(f"[publish] PR: {pr['html_url']}")
-
-
-def latest_research_branch():
-    """最新的 research/* 分支名（名字含时间戳可直接排序）；无则 None"""
-    r = subprocess.run(("git", "ls-remote", f"https://x-access-token:{PAT}@github.com/{REPO}.git",
-                        "refs/heads/research/*"), capture_output=True, text=True, check=True)
-    refs = [ln.split()[1] for ln in r.stdout.splitlines() if ln.strip()]
-    return refs[-1].removeprefix("refs/heads/") if refs else None
+    print(f"[publish] PR: {pull['html_url']}")
 
 
 def restore():
     work = "/tmp/restore"
     shutil.rmtree(work, ignore_errors=True)
-    branch = latest_research_branch()
-    if branch:
-        url = f"https://x-access-token:{PAT}@github.com/{REPO}.git"
-        git("clone", "--depth", "1", "--branch", branch, url, work, cwd="/tmp")
-        print(f"[restore] 从最新研究分支 {branch} 恢复（可能含未合并 PR 的内容）")
-    else:
-        clone_to(work)
-    src = os.path.join(work, "data")
-    if not os.path.isdir(src):
-        print("[restore] 仓库无 data/，跳过")
+    clone_to(work)
+    src = Path(work) / "data" / "outputs"
+    if not src.is_dir():
+        print(f"[restore] {BASE} 分支无 data/outputs，跳过")
         return
-    n = 0
-    for root, _, files in os.walk(src):
-        dst_dir = os.path.join(DATA, os.path.relpath(root, src))
-        os.makedirs(dst_dir, exist_ok=True)
-        for f in files:
-            dst = os.path.join(dst_dir, f)
-            if not os.path.exists(dst):  # 只补缺失，不覆盖本地
-                shutil.copy2(os.path.join(root, f), dst)
-                n += 1
-    print(f"[restore] 补回 {n} 个文件到 {DATA}")
+
+    count = 0
+    for source in src.rglob("*"):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(src)
+        if "logs" in relative.parts or IGNORE(str(source.parent), [source.name]):
+            continue
+        destination = DATA / "outputs" / relative
+        if destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        count += 1
+    print(f"[restore] 从 {BASE} 分支补回 {count} 个研究产出文件到 {DATA / 'outputs'}")
 
 
 if __name__ == "__main__":
     try:
         restore() if len(sys.argv) > 1 and sys.argv[1] == "restore" else publish()
-    except Exception as e:  # noqa: BLE001 — 失败必须可见，由 entrypoint 记日志
-        err = getattr(e, "stderr", None)
-        print(f"[publish] FAILED: {e}" + (f"\n{str(err)[-500:]}" if err else ""), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 — 失败必须可见，由 entrypoint 记日志
+        stderr = getattr(exc, "stderr", None)
+        detail = f"\n{str(stderr)[-500:]}" if stderr else ""
+        print(f"[publish] FAILED: {exc}{detail}", file=sys.stderr)
         sys.exit(1)

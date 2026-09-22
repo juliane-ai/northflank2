@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
 
 ENV TZ=Asia/Shanghai \
     DEBIAN_FRONTEND=noninteractive \
@@ -10,6 +10,7 @@ ENV TZ=Asia/Shanghai \
     ROUND_TIMEOUT_SECONDS=3600 \
     SEARCH_API_URL=https://p01--g02-ritup-repo01-search--4ygvmqls7l8l.code.run/search \
     DATA_DIR=/opt/data \
+    GITHUB_BASE=pi \
     RESTORE_IF_DATA_EXISTS=false \
     SCHEDULED_BACKUP_ENABLED=false \
     SCHEDULED_BACKUP_TIME=03:30

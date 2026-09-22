@@ -12,7 +12,7 @@
 ```text
 northflank2/（本仓库 = Northflank 构建上下文）
 ├── Dockerfile              node:24-bookworm-slim + pi + python3
-├── entrypoint.sh           启动：R2恢复 → 播种 models.json/看板 → 研究循环 + 备份循环
+├── entrypoint.sh           启动：GitHub outputs 恢复 → R2 恢复 → 播种 → 研究循环 + 备份循环
 ├── agent/
 │   ├── SOUL.md             「量化研究员」人格（与 northflank1 完全一致）
 │   ├── round-prompt.md     每轮研究任务指令
@@ -28,6 +28,7 @@ northflank2/（本仓库 = Northflank 构建上下文）
 
 ```text
 entrypoint.sh
+├── publish.py restore（GITHUB_BASE=pi，仅 outputs，可选）
 ├── restore-data（R2，可选）→ /opt/data
 ├── 播种 /root/.pi/agent/models.json 与 outputs/研究看板.md（仅在缺失时）
 ├── scheduled-backup 循环（可选）
@@ -44,8 +45,8 @@ Agent 研究时可调用已部署的 SearXNG JSON API（`SEARCH_API_URL`，默�
 ## Northflank 部署
 
 1. 创建 **Background Worker** Service（无 HTTP 端口），从 Git 仓库 `juliane-ai/northflank2` 构建。
-2. 环境变量与 northflank1 完全一致（见 `env.example`），仅 `BACKUP_OBJECT_KEY` 必须不同
-   （默认 `northflank2/data.tar.gz.enc`）。
+2. 环境变量见 `.env.example`。与 northflank1 相比，`GITHUB_BASE` 必须保持 `pi`，
+   `BACKUP_OBJECT_KEY` 默认 `northflank2/data.tar.gz.enc`；两个隔离 base 避免互相覆盖。
 3. 看研究进展：R2 备份拉回 `outputs/`，或进容器看 `/opt/data/outputs/`。
 
 ## 本地构建与冒烟
@@ -69,7 +70,7 @@ docker run --rm -e NEW_API_KEY=sk-xxx -e RESEARCH_FIRST_DELAY_SECONDS=3600 quant
 | 部署类型 | Combined Service（带端口） | Background Worker |
 | 运维入口 | 浏览器 dashboard 直接对话/查看 | 日志 + outputs 文件 |
 
-研究人格、知识库、看板、两边一致：产出与会话记忆主通道是私有 GitHub 仓库（每轮全量同步 /opt/data → 仓库 data/，新研报开 issue、开 PR；启动时自动恢复），R2 为可选冷备（默认关，需 BACKUP_* 变量）。
+研究人格、知识库、看板一致，但 GitHub base 隔离：northflank1 用 `main`，本服务用 `pi`。GitHub 只同步 `outputs/` 的人类可读产物；pi session、运行时状态和缓存走 R2 加密冷备。
 
 ## 注意
 
@@ -79,7 +80,6 @@ docker run --rm -e NEW_API_KEY=sk-xxx -e RESEARCH_FIRST_DELAY_SECONDS=3600 quant
 
 ## 已知限制（ponytail: 记录上限，触发再升级）
 
-- **双 agent 同仓库会重复研究**：两个服务共用一个 GitHub 研究仓库时会抢同一个「最高优先级待研究」主题（已实测重复）。建议只跑一个服务，或给两边错开 `RESEARCH_FIRST_DELAY_SECONDS` 并人工分派主题。
-- **仓库增长**：每轮 push 含会话/状态二进制（约 MB 级/轮，6h 一轮）。定期合并 PR 并清理旧 `research/*` 分支即可；超过 1GB 再考虑裁剪同步范围。
+- **A/B 主题仍需人工分派**：本服务使用 `GITHUB_BASE=pi`，northflank1 使用 `main`，不会再互相覆盖；但两个 base 中的看板仍可能同时选择同一个待研究主题。
 - **模型兼容**：`openai/gpt-oss-20b` 经 openai-completions 中转会产出畸形工具调用（工具名混入 `<|channel|>` 残留，上游 IndexError）。研究轮用默认 `nvidia/nemotron-3-super-120b-a12b`（gpt-oss-20b 有工具调用缺陷）。
-- **restore 语义**：重启后从最新 `research/*` 分支找回数据；若上一轮 publish 失败（已加 3 次重试），看板状态回退一轮，最坏情况重做一次已完成主题（publish 的 issue 标题去重可挡住重复开题）。
+- **restore 语义**：重启只从 `pi` base 恢复 outputs；未合并 `research/*` 分支不参与恢复。若 `pi` 分支不存在，会从默认分支引导。
